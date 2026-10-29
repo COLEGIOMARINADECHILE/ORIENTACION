@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mi Proyecto de Vida · Colegio Marina de Chile</title>
+  <meta name="description" content="Plataforma de orientación y proyecto de vida del Colegio Marina de Chile, Concepción.">
+  <link rel="icon" href="assets/insignia.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root { --navy: #0b2a66; --mar: #0f4c9c; --oro: #e3b505; --oro2: #f4d35e; --ladrillo: #c8553d; --turquesa: #1f9e8f; --violeta: #6c4ab6;
+      --fondo: #f5f3ee; --papel: #fff; --tinta: #14213d; --tinta2: #4a5470; --linea: #e3e0d8; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) { --fondo: #0d1424; --papel: #151f35; --tinta: #edf1fa; --tinta2: #a9b4cc; --linea: #26324d; }
+    }
+    :root[data-theme="dark"] { --fondo: #0d1424; --papel: #151f35; --tinta: #edf1fa; --tinta2: #a9b4cc; --linea: #26324d; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; color: var(--tinta); background: var(--fondo); line-height: 1.55; }
+    a { color: inherit; }
+    .hero { position: relative; overflow: hidden; color: #fff; padding: 28px 16px 120px;
+      background: radial-gradient(1000px 500px at 10% 0%, #1d4fa8 0%, var(--navy) 55%, #071b44 100%); }
+    .foto { position: absolute; inset: 0; background: url('assets/colegio.webp') center/cover; opacity: .18; mix-blend-mode: luminosity; }
+    .contenedor { position: relative; max-width: 1100px; margin: 0 auto; }
+    .marca { display: flex; align-items: center; gap: 14px; }
+    .marca img { height: 64px; width: auto; filter: drop-shadow(0 6px 14px rgba(0,0,0,.3)); }
+    .marca b { display: block; font-size: 1.05rem; }
+    .marca span { opacity: .8; font-size: .88rem; }
+    .grid-hero { display: grid; grid-template-columns: 1.1fr .9fr; gap: 24px; align-items: center; margin-top: 30px; }
+    h1 { font-family: 'Fraunces', Georgia, serif; font-size: clamp(2.3rem, 5.5vw, 4rem); line-height: 1.05; margin: 0 0 14px; letter-spacing: -.01em; }
+    h1 em { color: var(--oro2); }
+    .sub { font-size: 1.1rem; opacity: .92; max-width: 50ch; margin: 0 0 24px; }
+    .btn { display: inline-flex; align-items: center; gap: 10px; padding: 15px 26px; border-radius: 14px; font-weight: 800; font-size: 1.05rem; text-decoration: none;
+      background: linear-gradient(135deg, #f7d24a, #e3a805); color: #1d1600; box-shadow: 0 10px 24px rgba(227,165,5,.4); transition: transform .15s ease; }
+    .btn:hover { transform: translateY(-2px); }
+    .btn svg { width: 22px; height: 22px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+    .chips span { padding: 7px 13px; border-radius: 999px; font-size: .86rem; font-weight: 600; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22); }
+    .ilus { width: 100%; max-width: 460px; justify-self: center; filter: drop-shadow(0 22px 30px rgba(0,0,0,.35)); animation: flotar 6s ease-in-out infinite; }
+    @keyframes flotar { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+    .olas { position: absolute; left: 0; right: 0; bottom: -1px; width: 100%; height: 110px; }
+    main { max-width: 1100px; margin: -40px auto 0; padding: 0 16px 60px; position: relative; }
+    .perfiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+    .tarjeta { background: var(--papel); border: 1px solid var(--linea); border-radius: 22px; padding: 24px; box-shadow: 0 14px 34px rgba(11,42,102,.10); display: flex; flex-direction: column; }
+    .tarjeta h2 { margin: 12px 0 6px; font-size: 1.25rem; }
+    .tarjeta p { margin: 0 0 16px; color: var(--tinta2); flex: 1; }
+    .ico { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; color: #fff; background: var(--c); box-shadow: 0 10px 20px color-mix(in srgb, var(--c) 35%, transparent); }
+    .ico svg { width: 28px; height: 28px; }
+    .ingreso { font-size: .88rem; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--c) 10%, var(--papel)); margin-bottom: 14px; }
+    .enlace { font-weight: 800; color: var(--c); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+    .enlace:hover { text-decoration: underline; }
+    h3 { font-family: 'Fraunces', Georgia, serif; font-size: 1.6rem; margin: 48px 0 16px; }
+    .sesiones { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+    .sesion { background: var(--papel); border: 1px solid var(--linea); border-radius: 18px; padding: 16px; border-top: 5px solid var(--c); }
+    .sesion b { display: block; font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--c); }
+    .sesion span { font-weight: 700; font-size: .95rem; }
+    .privacidad { margin-top: 40px; display: flex; gap: 14px; align-items: flex-start; padding: 18px 20px; border-radius: 18px; background: var(--papel); border: 1px solid var(--linea); color: var(--tinta2); font-size: .92rem; }
+    .privacidad svg { flex: none; width: 26px; height: 26px; color: var(--turquesa); }
+    footer { text-align: center; color: var(--tinta2); font-size: .85rem; padding: 0 16px 30px; }
+    @media (max-width: 860px) {
+      .grid-hero { grid-template-columns: 1fr; }
+      .ilus { max-width: 300px; }
+      .perfiles { grid-template-columns: 1fr; }
+      .sesiones { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="foto" aria-hidden="true"></div>
+    <div class="contenedor">
+      <div class="marca"><img src="assets/insignia.jpg" alt="Insignia del Colegio Marina de Chile"><div><b>Colegio Marina de Chile</b><span>Concepción · Orientación 2026</span></div></div>
+      <div class="grid-hero">
+        <div>
+          <h1>Mi proyecto de <em>vida</em></h1>
+          <p class="sub">La bitácora para pensar quién eres, explorar tus opciones y decidir con autonomía tu próximo paso en la enseñanza media, junto a tu familia y al equipo del colegio.</p>
+          <a class="btn" id="entrar" href="#">Ingresar a la plataforma
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg></a>
+          <div class="chips"><span>5 sesiones</span><span>Perfil de intereses</span><span>Insignias</span><span>Chat con tu equipo</span></div>
+        </div>
+        <img class="ilus" src="assets/estudiantes.webp" alt="Estudiantes del colegio con su proyecto de vida">
+      </div>
+    </div>
+    <svg class="olas" viewBox="0 0 1200 110" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 50 Q150 0 300 50 T600 50 T900 50 T1200 50 V110 H0z" fill="#0f4c9c" opacity=".55"/>
+      <path d="M0 75 Q150 35 300 75 T600 75 T900 75 T1200 75 V110 H0z" fill="var(--fondo)"/>
+    </svg>
+  </header>
+
+  <main>
+    <section class="perfiles" aria-label="Cómo ingresar">
+      <article class="tarjeta" style="--c:#e3a805">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M8 21v-5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v5"/></svg></div>
+        <h2>Estudiantes</h2>
+        <p>Explora las sesiones, responde tus cuestionarios, descubre tu perfil de intereses, gana insignias y conversa con tu equipo.</p>
+        <div class="ingreso">Perfil <b>Estudiante</b> · tu RUT · la primera vez, tu fecha de nacimiento (DDMMAAAA).</div>
+        <a class="enlace" data-entrar href="#">Ingresar →</a>
+      </article>
+      <article class="tarjeta" style="--c:#c8553d">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z"/></svg></div>
+        <h2>Familias</h2>
+        <p>Accede al manual para familias, responde las encuestas F1 y F2 y comunícate directamente con el colegio.</p>
+        <div class="ingreso">Perfil <b>Madre</b>, <b>Padre</b> o <b>Tutor/a</b> · RUT del estudiante · su fecha de nacimiento. Cada perfil tiene su propia clave.</div>
+        <a class="enlace" data-entrar href="#">Ingresar →</a>
+      </article>
+      <article class="tarjeta" style="--c:#6c4ab6">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 8-4 8 4M18 10l4 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8l4-2M14 22v-4a2 2 0 0 0-4 0v4M18 5v17M6 5v17"/><circle cx="12" cy="9" r="2"/></svg></div>
+        <h2>Equipo del colegio</h2>
+        <p>Docentes, asistentes y administración: sesiones, materiales, reportes, análisis con IA y mensajes a estudiantes y familias.</p>
+        <div class="ingreso">Perfil <b>Equipo</b> · su RUT · la clave entregada por la administración.</div>
+        <a class="enlace" data-entrar href="#">Ingresar →</a>
+      </article>
+    </section>
+
+    <h3>La travesía en 5 sesiones</h3>
+    <section class="sesiones">
+      <div class="sesion" style="--c:#e3a805"><b>Sesión 1</b><span>¿Quién soy hoy y hacia dónde voy?</span></div>
+      <div class="sesion" style="--c:#5b6fd6"><b>Sesión 2</b><span>Mis intereses, habilidades y valores</span></div>
+      <div class="sesion" style="--c:#1f9e8f"><b>Sesión 3</b><span>Información y decisiones</span></div>
+      <div class="sesion" style="--c:#c8553d"><b>Sesión 4</b><span>Comparar y planificar</span></div>
+      <div class="sesion" style="--c:#6c4ab6"><b>Sesión 5</b><span>Decido y me comprometo</span></div>
+    </section>
+
+    <div class="privacidad">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+      <span>Esta página es solo la puerta de entrada. Los datos personales no se guardan aquí: la plataforma funciona en la cuenta institucional del colegio, con acceso por perfil y claves cifradas, según la Ley 21.719 de protección de datos personales.</span>
+    </div>
+  </main>
+  <footer>Colegio Marina de Chile · Unidad Técnica Pedagógica · Coordinación de Segundo Ciclo · Concepción</footer>
+
+  <script>
+    // Enlace de la aplicación web de Apps Script. Si cambia, reemplácelo aquí.
+    var URL_PLATAFORMA = 'https://script.google.com/macros/s/AKfycbwL47EUXV9RSNDJFbRrsVPZmcQr0nUvQqzcx-9ZlFzfxudH-VUMgy9hbWGttsKpAFIq/exec';
+    document.querySelectorAll('#entrar, [data-entrar]').forEach(function (a) { a.href = URL_PLATAFORMA; });
+  </script>
+</body>
+</html>
