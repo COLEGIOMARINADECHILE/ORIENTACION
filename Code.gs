@@ -11,11 +11,44 @@ var ARCHIVOS_HTML = ['Index', 'Styles', 'Ilustraciones', 'App'];
 function doGet() {
   var faltan = archivosFaltantes_();
   if (faltan.length) return paginaInstalacion_(faltan);
+  var github = config_('urlGithub');
+  if (github) return paginaRedireccion_(github);
   var t = HtmlService.createTemplateFromFile('Index');
   return t.evaluate()
     .setTitle('Mi Proyecto de Vida · ' + config_('nombreColegio'))
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
+}
+
+/**
+ * doPost — API para la interfaz publicada en GitHub Pages.
+ * La página de GitHub envía {fn, args} y aquí se ejecuta la misma lógica que
+ * google.script.run: los datos SIEMPRE se guardan en Apps Script y cada acción
+ * exige un token de sesión válido (salvo login e información pública).
+ */
+function doPost(e) {
+  var out;
+  try {
+    var req = JSON.parse(e.postData.contents);
+    var permitidas = { api: api, login: login, logout: logout, infoPublica: infoPublica };
+    if (!permitidas.hasOwnProperty(req.fn)) throw new Error('Función no permitida.');
+    out = { r: permitidas[req.fn].apply(null, req.args || []) };
+  } catch (err) {
+    out = { error: String(err && err.message || err) };
+  }
+  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/** Si la plataforma se usa desde GitHub Pages, el enlace de Apps Script lleva allá. */
+function paginaRedireccion_(url) {
+  var u = String(url).replace(/"/g, '');
+  return HtmlService.createHtmlOutput(
+    '<div style="font-family:sans-serif;max-width:520px;margin:60px auto;padding:28px;border-radius:18px;background:#0b2a66;color:#fff;text-align:center">' +
+    '<h2>Mi Proyecto de Vida</h2><p>La plataforma está en esta dirección:</p>' +
+    '<p><a href="' + u + '" target="_top" style="display:inline-block;padding:14px 22px;border-radius:12px;background:#e3b505;color:#1d1600;font-weight:800;text-decoration:none">Ir a la plataforma</a></p>' +
+    '<p style="opacity:.8;font-size:13px;word-break:break-all">' + u + '</p></div>' +
+    '<script>try{window.top.location.href="' + u + '";}catch(e){}</script>')
+    .setTitle('Mi Proyecto de Vida');
 }
 
 /** Revisa que existan los archivos HTML con el nombre exacto que usa la plataforma. */
@@ -50,13 +83,15 @@ function include(nombre) {
   return HtmlService.createHtmlOutputFromFile(nombre).getContent();
 }
 
-var P = ['admin', 'docente', 'asistente'];
-var TODOS = ['admin', 'docente', 'asistente', 'estudiante', 'apoderado'];
+var P = ['admin', 'docente', 'asistente', 'personalizado'];
+var FAM = ['estudiante', 'apoderado'];
+var TODOS = P.concat(FAM);
 
 /**
- * Tabla de acciones: función + roles autorizados.
- * Se construye al llamarla (no al cargar el archivo) porque Apps Script carga
- * los .gs en orden y las funciones de otros archivos podrían no existir aún.
+ * Tabla de acciones: función, roles que pueden llamarla y permiso requerido.
+ *   p  = permiso exigido a funcionarios   ·   pa = permiso exigido a alumnos/adultos
+ * Los permisos se configuran en "Perfiles y permisos" (Permisos.gs).
+ * Se construye al llamarla porque Apps Script carga los .gs en orden.
  */
 function acciones_() { return {
   perfil:              { fn: function (s) { return perfilPublico_(s); }, roles: TODOS },
@@ -66,60 +101,75 @@ function acciones_() { return {
   inicio:              { fn: inicio_, roles: TODOS },
 
   // Contenido
-  sesiones:            { fn: listarSesiones_, roles: TODOS },
-  sesion:              { fn: obtenerSesion_, roles: TODOS },
-  guardarSesion:       { fn: guardarSesion_, roles: P },
-  eliminarSesion:      { fn: eliminarSesion_, roles: ['admin'] },
-  materiales:          { fn: listarMateriales_, roles: TODOS },
-  guardarMaterial:     { fn: guardarMaterial_, roles: P },
-  eliminarMaterial:    { fn: eliminarMaterial_, roles: P },
-  archivoMaterial:     { fn: archivoMaterial_, roles: TODOS },
+  sesiones:            { fn: listarSesiones_, roles: TODOS, pa: 'sesiones' },
+  sesion:              { fn: obtenerSesion_, roles: TODOS, pa: 'sesiones' },
+  guardarSesion:       { fn: guardarSesion_, roles: P, p: 'sesiones.editar' },
+  eliminarSesion:      { fn: eliminarSesion_, roles: P, p: 'sesiones.eliminar' },
+  subirImagenContenido:{ fn: subirImagenContenido_, roles: P, p: 'sesiones.editar' },
+  imagenes:            { fn: imagenesContenido_, roles: TODOS },
+  actualizarContenido: { fn: actualizarContenido_, roles: P, p: 'config' },
+  materiales:          { fn: listarMateriales_, roles: TODOS, pa: 'sesiones' },
+  guardarMaterial:     { fn: guardarMaterial_, roles: P, p: 'materiales' },
+  eliminarMaterial:    { fn: eliminarMaterial_, roles: P, p: 'materiales' },
+  archivoMaterial:     { fn: archivoMaterial_, roles: TODOS, pa: 'sesiones' },
+
+  // Ejercicios desarrollados en la guía
+  guardarTrabajo:      { fn: guardarTrabajo_, roles: FAM, pa: 'ejercicios' },
+  imagenTrabajo:       { fn: imagenTrabajo_, roles: TODOS },
 
   // Cuestionarios
-  cuestionarios:       { fn: listarCuestionarios_, roles: TODOS },
-  cuestionario:        { fn: obtenerCuestionario_, roles: TODOS },
-  responder:           { fn: responder_, roles: ['estudiante', 'apoderado'] },
-  misResultados:       { fn: misResultados_, roles: ['estudiante', 'apoderado'] },
-  guardarCuestionario: { fn: guardarCuestionario_, roles: ['admin'] },
-  habilitarCuestionario: { fn: habilitarCuestionario_, roles: P },
+  cuestionarios:       { fn: listarCuestionarios_, roles: TODOS, pa: 'cuestionarios' },
+  cuestionario:        { fn: obtenerCuestionario_, roles: TODOS, pa: 'cuestionarios' },
+  responder:           { fn: responder_, roles: FAM, pa: 'cuestionarios' },
+  misResultados:       { fn: misResultados_, roles: FAM, pa: 'resultados' },
+  guardarCuestionario: { fn: guardarCuestionario_, roles: P, p: 'cuestionarios.editar' },
+  habilitarCuestionario: { fn: habilitarCuestionario_, roles: P, p: 'cuestionarios.habilitar' },
+  matrizCuestionario:  { fn: matrizCuestionario_, roles: P, p: 'resultados.cargar' },
+  importarResultados:  { fn: importarResultados_, roles: P, p: 'resultados.cargar' },
 
   // Mensajería
   hilos:               { fn: listarHilos_, roles: TODOS },
-  hilo:                { fn: obtenerHilo_, roles: TODOS },
-  enviar:              { fn: enviarMensaje_, roles: TODOS },
+  hilo:                { fn: obtenerHilo_, roles: TODOS, p: 'mensajes', pa: 'mensajes' },
+  enviar:              { fn: enviarMensaje_, roles: TODOS, p: 'mensajes', pa: 'mensajes' },
   avisos:              { fn: listarAvisos_, roles: TODOS },
-  publicarAviso:       { fn: publicarAviso_, roles: P },
-  like:                { fn: darLike_, roles: TODOS },
+  publicarAviso:       { fn: publicarAviso_, roles: P, p: 'mensajes' },
+  like:                { fn: darLike_, roles: TODOS, pa: 'muro' },
 
   // Retroalimentación
-  retro:               { fn: listarRetro_, roles: TODOS },
-  guardarRetro:        { fn: guardarRetro_, roles: P },
-  visibilidadRetro:    { fn: visibilidadRetro_, roles: ['admin'] },
+  retro:               { fn: listarRetro_, roles: TODOS, pa: 'retro' },
+  guardarRetro:        { fn: guardarRetro_, roles: P, p: 'retro' },
+  visibilidadRetro:    { fn: visibilidadRetro_, roles: P, p: 'retro.visibilidad' },
 
-  // Reportes y análisis
+  // Cursos, reportes y análisis
   cursos:              { fn: listarCursos_, roles: P },
-  estudiantesCurso:    { fn: estudiantesCurso_, roles: P },
-  reporteEstudiante:   { fn: reporteEstudiante_, roles: P },
-  reporteCurso:        { fn: reporteCurso_, roles: P },
-  reporteSesion:       { fn: reporteSesion_, roles: P },
-  analisis:            { fn: obtenerAnalisis_, roles: P },
-  historialAnalisis:   { fn: historialAnalisis_, roles: P },
+  guardarCurso:        { fn: guardarCurso_, roles: P, p: 'cursos.gestionar' },
+  eliminarCurso:       { fn: eliminarCurso_, roles: P, p: 'cursos.gestionar' },
+  estudiantesCurso:    { fn: estudiantesCurso_, roles: P, p: 'cursos.ver' },
+  reporteEstudiante:   { fn: reporteEstudiante_, roles: P, p: 'cursos.ver' },
+  reporteCurso:        { fn: reporteCurso_, roles: P, p: 'reportes' },
+  reporteSesion:       { fn: reporteSesion_, roles: P, p: 'reportes' },
+  analisis:            { fn: obtenerAnalisis_, roles: P, p: 'analisis' },
+  historialAnalisis:   { fn: historialAnalisis_, roles: P, p: 'analisis' },
 
   // Administración
-  usuarios:            { fn: listarUsuarios_, roles: ['admin'] },
-  guardarUsuario:      { fn: guardarUsuario_, roles: ['admin'] },
-  eliminarUsuario:     { fn: eliminarUsuario_, roles: ['admin'] },
-  restablecerClave:    { fn: restablecerClave_, roles: ['admin'] },
-  importar:            { fn: importarEstudiantes_, roles: ['admin'] },
-  eliminarEstudiante:  { fn: eliminarEstudiante_, roles: ['admin'] },
-  config:              { fn: leerConfig_, roles: ['admin'] },
-  guardarConfig:       { fn: guardarConfig_, roles: ['admin'] },
-  subirImagen:         { fn: subirImagen_, roles: ['admin'] },
-  auditoria:           { fn: leerAuditoria_, roles: ['admin'] },
-  depurar:             { fn: depurarDatos_, roles: ['admin'] }
+  usuarios:            { fn: listarUsuarios_, roles: P, p: 'usuarios' },
+  guardarUsuario:      { fn: guardarUsuario_, roles: P, p: 'usuarios' },
+  eliminarUsuario:     { fn: eliminarUsuario_, roles: P, p: 'usuarios' },
+  restablecerClave:    { fn: restablecerClave_, roles: P, p: 'usuarios' },
+  eliminarEstudiante:  { fn: eliminarEstudiante_, roles: P, p: 'usuarios' },
+  perfiles:            { fn: listarPerfiles_, roles: P, p: 'usuarios' },
+  guardarPerfil:       { fn: guardarPerfil_, roles: P, p: 'usuarios' },
+  eliminarPerfil:      { fn: eliminarPerfil_, roles: P, p: 'usuarios' },
+  importar:            { fn: importarEstudiantes_, roles: P, p: 'carga' },
+  config:              { fn: leerConfig_, roles: P, p: 'config' },
+  guardarConfig:       { fn: guardarConfig_, roles: P, p: 'config' },
+  subirImagen:         { fn: subirImagen_, roles: P, p: 'config' },
+  refrescar:           { fn: refrescarDatos_, roles: P, p: 'config' },
+  depurar:             { fn: depurarDatos_, roles: P, p: 'config' },
+  auditoria:           { fn: leerAuditoria_, roles: P, p: 'auditoria' }
 }; }
 
-/** Único punto de entrada para google.script.run desde el navegador. */
+/** Único punto de entrada para google.script.run (y para doPost desde GitHub). */
 function api(req) {
   try {
     req = req || {};
@@ -128,6 +178,8 @@ function api(req) {
     if (!def) throw new Error('Acción desconocida.');
     var ses = sesion_(req.token);
     exigir_(ses, def.roles);
+    var permiso = esPersonal_(ses) ? def.p : def.pa;
+    if (permiso && !tienePermiso_(ses, permiso)) throw new Error('Su perfil no tiene permiso para esta función.');
     var res = def.fn(ses, req.datos || {});
     return JSON.stringify({ ok: true, data: res });
   } catch (e) {
@@ -138,12 +190,23 @@ function api(req) {
 
 /** Información pública para la pantalla de ingreso (sin datos personales). */
 function infoPublica() {
+  var cache = CacheService.getScriptCache();
+  var enCache = cache.get('INFO_PUBLICA');
+  if (enCache) return enCache;
+  var info = infoPublicaDatos_();
+  if (info.length < 95000) cache.put('INFO_PUBLICA', info, DURACION_CACHE);
+  return info;
+}
+
+function infoPublicaDatos_() {
   return JSON.stringify({
     colegio: config_('nombreColegio'),
     ciudad: config_('ciudad'),
     unidad: config_('unidad'),
     anio: config_('anio'),
     contactoPrivacidad: config_('contactoPrivacidad'),
+    urlPlataforma: config_('urlPlataforma'),
+    urlGithub: config_('urlGithub'),
     retencionMeses: config_('retencionMeses'),
     imagenes: {
       logo: urlImagen_(config_('img_logo')),
@@ -177,6 +240,7 @@ function subirImagen_(ses, d) {
   var blob = Utilities.newBlob(Utilities.base64Decode(d.base64), d.mime, d.nombre);
   var f = carpeta_('Imagenes').createFile(blob);
   setConfig_(d.clave, 'drive:' + f.getId());
+  CacheService.getScriptCache().remove('INFO_PUBLICA');
   auditar_(ses, 'subir_imagen', d.clave);
   return { ok: true, url: urlImagen_('drive:' + f.getId()) };
 }
@@ -209,6 +273,7 @@ function guardarConfig_(ses, d) {
   Object.keys(d).forEach(function (k) {
     if (CONFIG_DEFECTO.hasOwnProperty(k) && k.indexOf('img_') !== 0) setConfig_(k, String(d[k]));
   });
+  CacheService.getScriptCache().remove('INFO_PUBLICA');
   auditar_(ses, 'config', Object.keys(d).join(','));
   return leerConfig_();
 }
@@ -220,14 +285,17 @@ function leerAuditoria_(ses, d) {
 }
 
 /**
- * Pantalla de inicio por rol: resumen de lo pendiente.
+ * Pantalla de inicio por rol: todo lo que necesita la portada en UNA sola llamada
+ * (sesiones, cuestionarios, cursos, avisos y mensajes sin leer) para que cargue rápido.
  */
 function inicio_(ses) {
   var out = { perfil: perfilPublico_(ses) };
-  var ses_ = listarSesiones_(ses);
-  out.sesiones = ses_.length;
-  if (ses.rol === 'estudiante' || ses.rol === 'apoderado') {
-    var cs = listarCuestionarios_(ses);
+  var fam = !esPersonal_(ses);
+  out.listaSesiones = (!fam || tienePermiso_(ses, 'sesiones')) ? listarSesiones_(ses) : [];
+  out.sesiones = out.listaSesiones.length;
+  if (fam) {
+    var cs = tienePermiso_(ses, 'cuestionarios') ? listarCuestionarios_(ses) : [];
+    out.listaCuestionarios = cs;
     out.pendientes = cs.filter(function (c) { return !c.respondido; }).length;
     out.respondidos = cs.filter(function (c) { return c.respondido; }).length;
     out.totalCuestionarios = cs.length;
@@ -237,7 +305,7 @@ function inicio_(ses) {
     out.estudiantes = cursos.reduce(function (a, c) { return a + c.estudiantes; }, 0);
   }
   out.noLeidos = listarHilos_(ses).reduce(function (a, h) { return a + (h.noLeidos || 0); }, 0);
-  out.avisos = listarAvisos_(ses).slice(0, 3);
+  out.avisos = (!fam || tienePermiso_(ses, 'muro')) ? listarAvisos_(ses).slice(0, 3) : [];
   return out;
 }
 

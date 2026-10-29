@@ -458,6 +458,45 @@ h3 .ic { color: var(--mar); }
 /* Estados vacíos */
 .burbuja-ico { width: 64px; height: 64px; margin: 0 auto 10px; border-radius: 20px; display: grid !important; place-items: center; background: var(--suave); color: var(--mar); font-size: 1.8rem; }
 
+/* =================== Guías interactivas =================== */
+.mb { margin-bottom: 16px; }
+.bloque.cuestionario { --bc: #6c4ab6; background: linear-gradient(135deg, color-mix(in srgb, #6c4ab6 7%, var(--papel)), var(--papel)); }
+.bloque-txt table { display: block; overflow-x: auto; border-collapse: collapse; width: 100%; margin: 8px 0; font-size: .9rem; }
+.bloque-txt th { background: var(--suave); text-align: left; padding: 8px 10px; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--tinta-2); }
+.bloque-txt td { border-top: 1px solid var(--linea); padding: 8px 10px; vertical-align: top; min-width: 140px; }
+.bloque-txt ul { margin: .4em 0; padding-left: 1.2em; }
+.bloque-txt li { margin-bottom: .3em; }
+.bloque-img { margin: 12px 0 0; }
+.bloque-img img { width: 100%; max-height: 520px; object-fit: contain; border-radius: 14px; background: var(--suave); }
+.bloque-img figcaption { font-size: .82rem; color: var(--tinta-2); margin-top: 6px; text-align: center; }
+.video-marco { position: relative; padding-top: 56.25%; border-radius: 14px; overflow: hidden; margin-top: 12px; background: #000; }
+.video-marco iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.video-archivo { width: 100%; border-radius: 14px; margin-top: 12px; }
+.ejercicio-form { margin-top: 14px; padding: 16px; border-radius: 14px; background: var(--papel); border: 1.5px dashed color-mix(in srgb, var(--bc) 45%, transparent); }
+.ejercicio-form .campo > span { font-weight: 700; color: var(--tinta); }
+.ejercicio-form textarea { min-height: 60px; }
+.ej-vista { margin-top: 12px; display: grid; gap: 6px; }
+.ej-campo-vista { padding: 8px 12px; border-radius: 10px; background: var(--papel); border: 1px dashed var(--linea); font-size: .88rem; color: var(--tinta-2); }
+.portada-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sesion-head img.fondo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; }
+.portada-editor { display: grid; grid-template-columns: 220px 1fr; gap: 14px; align-items: start; }
+.portada-prev { height: 124px; border-radius: 14px; overflow: hidden; background: var(--suave); }
+.portada-prev .escena, .portada-prev img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ed-num { display: inline-grid; place-items: center; min-width: 28px; height: 28px; border-radius: 9px; background: var(--navy); color: #fff; font-weight: 800; font-size: .82rem; flex: none; }
+.ed-mini img { width: 64px; height: 48px; object-fit: cover; border-radius: 8px; }
+.pasos-papel { display: grid; gap: 14px; margin-top: 10px; }
+.paso-papel { display: flex; gap: 14px; padding: 16px; border-radius: 16px; background: var(--fondo); border: 1px solid var(--linea); }
+.paso-papel > div { flex: 1; min-width: 0; }
+.paso-papel p { margin: 4px 0 10px; }
+.perfil-card { border-top: 4px solid var(--c); }
+.permisos-mini { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px; }
+.permisos-mini span { width: 14px; height: 14px; border-radius: 4px; background: var(--suave); }
+.permisos-mini span.on { background: var(--c); }
+.lista-permisos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.permiso { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; border: 1.5px solid var(--linea); cursor: pointer; font-size: .9rem; }
+.permiso:has(input:checked) { border-color: var(--mar); background: var(--suave); }
+.permiso input { width: 18px; height: 18px; accent-color: var(--navy); flex: none; margin-top: 2px; }
+
 /* Navegación inferior móvil */
 .nav-movil { display: none; }
 @media (max-width: 900px) {
@@ -486,6 +525,8 @@ h3 .ic { color: var(--mar); }
   .nav-movil .badge { position: absolute; top: 0; right: 8px; background: var(--ladrillo); color: #fff; border-radius: 999px; font-size: .62rem; padding: 0 5px; }
   .burbuja { max-width: 88%; }
   .ruta { grid-auto-columns: 74%; }
+  .portada-editor, .lista-permisos { grid-template-columns: 1fr; }
+  .paso-papel { flex-direction: column; }
   .bloque-txt { padding-left: 0; }
   .sesion-head::before { background: linear-gradient(0deg, rgba(8,24,64,.92) 10%, rgba(8,24,64,.3) 100%); }
   .sesion-head { min-height: 280px; }

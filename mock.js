@@ -6,9 +6,9 @@
 (function () {
   const ind = { claridad: 2.67, conocimiento: 3.25, autonomia: 2.5, certeza: 3 };
   const perfiles = {
-    estudiante: { uid: 'EST:11111111-1', rol: 'estudiante', tipo: 'estudiante', nombre: 'Camila Ejemplo', cursos: ['8° A'], estudianteNombre: 'Camila Ejemplo', debeCambiar: true, consentimiento: true },
-    madre: { uid: 'APO:11111111-1:madre', rol: 'apoderado', tipo: 'madre', nombre: 'Madre De Ejemplo', cursos: ['8° A'], estudianteNombre: 'Camila Ejemplo', debeCambiar: false, consentimiento: true },
-    personal: { uid: 'PER:12345678-5', rol: 'admin', tipo: 'personal', nombre: 'Orientadora Ejemplo', cursos: [], estudianteNombre: '', debeCambiar: false, consentimiento: true }
+    estudiante: { uid: 'EST:11111111-1', rol: 'estudiante', tipo: 'estudiante', nombre: 'Camila Ejemplo', cursos: ['8° A'], estudianteNombre: 'Camila Ejemplo', debeCambiar: true, consentimiento: true, permisos: ['sesiones','ejercicios','cuestionarios','resultados','retro','mensajes','muro'], perfilNombre: '' },
+    madre: { uid: 'APO:11111111-1:madre', rol: 'apoderado', tipo: 'madre', nombre: 'Madre De Ejemplo', cursos: ['8° A'], estudianteNombre: 'Camila Ejemplo', debeCambiar: false, consentimiento: true, permisos: ['sesiones','ejercicios','cuestionarios','resultados','retro','mensajes','muro'], perfilNombre: '' },
+    personal: { uid: 'PER:12345678-5', rol: 'admin', tipo: 'personal', nombre: 'Orientadora Ejemplo', cursos: [], estudianteNombre: '', debeCambiar: false, consentimiento: true, permisos: ['cursos.ver','todosLosCursos','sesiones.editar','sesiones.eliminar','materiales','cuestionarios.habilitar','cuestionarios.editar','resultados.cargar','reportes','analisis','mensajes','retro','retro.visibilidad','cursos.gestionar','usuarios','carga','config','auditoria'], todosLosCursos: true, perfilNombre: 'Administración' }
   };
   let yo = perfiles.estudiante;
   const sesiones = [
@@ -41,10 +41,12 @@
     contenido: { resumen: 'Curso 8° A: 32 estudiantes, 31 con respuestas. Indicador más alto: Conocimiento de opciones (3.25/4); más bajo: Autonomía (2.5/4).', fortalezas: ['Conocimiento de opciones en nivel logrado (3.25/4).', 'Intereses predominantes: Social y Artístico.'], focos: ['Autonomía en desarrollo (2.5/4).'], alertas: ['1 estudiante(s) con alertas.'], recomendaciones: ['Trabajar en grupo la revisión de autonomía y el caso de Valentina.'], decisiones: ['Priorizar conversaciones individuales con los estudiantes en alerta.'], mensajeEstudiante: '', sugerenciasFamilia: 'Promover el estilo autoritativo.' } };
   const R = {
     perfil: () => yo,
-    inicio: () => ({ perfil: yo, sesiones: 6, pendientes: 1, noLeidos: 2, avisos, cursos: [{ curso: '8° A', estudiantes: 32 }, { curso: '8° B', estudiantes: 30 }], estudiantes: 62 }),
+    inicio: () => ({ perfil: yo, listaSesiones: sesiones, listaCuestionarios: cuestionarios, sesiones: 6, pendientes: 1, noLeidos: 2, avisos, cursos: [{ curso: '8° A', estudiantes: 32 }, { curso: '8° B', estudiantes: 30 }], estudiantes: 62 }),
     sesiones: () => sesiones, cuestionarios: () => cuestionarios, avisos: () => avisos, materiales: () => [{ id: 'm1', titulo: 'Presentación Sesión 1', descripcion: 'Diapositivas para la clase', tieneArchivo: true, mime: 'application/pdf', autorNombre: 'Profesora Jefe Ejemplo', fecha: '2026-10-20', audiencia: 'estudiantes', cursos: '8° A' }],
     sesion: () => ({ id: 's1', numero: 1, titulo: sesiones[0].titulo, objetivo: sesiones[0].objetivo, audiencia: 'estudiantes', imagen: 'brujula', autorNombre: 'Coordinación de Segundo Ciclo', actualizado: '2026-10-20 10:00',
       bloques: [{ tipo: 'caso', titulo: 'Camila, 13 años', texto: 'Dibuja desde pequeña y pasa horas creando historietas. <b>¿Qué le dirías a Camila?</b>' }, { tipo: 'psicologia', titulo: 'Creer que puedes: la autoeficacia', texto: 'Albert Bandura (1977) llamó <b>autoeficacia</b> a la confianza en la propia capacidad.' }, { tipo: 'ejercicio', titulo: 'Ejercicio 1: Mi línea de vida', texto: 'Marca cinco hitos: dos del pasado, uno del presente y dos del futuro.' }, { tipo: 'recuerde', titulo: 'Recuerda', texto: 'Lo que piensas hoy puede cambiar.' }],
+      bloques: [].concat([{ id: 'x1', tipo: 'cuestionario', codigo: 'E1', titulo: 'Encuesta 1: Mi proyecto de vida hoy (E1)', texto: 'Parte A, B y C.' }, { id: 'x2', tipo: 'ejercicio', titulo: 'Ejercicio 1: Mi línea de vida', texto: 'Marque cinco hitos.', campos: ['Hito 1 (pasado)', 'Hito 2 (pasado)', 'Hito 3 (presente)'], foto: true, img: '/assets/estudiantes.webp', pie: 'Ejemplo de imagen en un paso' }, { id: 'x3', tipo: 'texto', titulo: 'Tabla de ejemplo', texto: '<table><thead><tr><th>Ámbito</th><th>Qué hace el colegio</th></tr></thead><tbody><tr><td>Estudios</td><td>Enseñanza científico-humanista</td></tr></tbody></table>' }]),
+      misTrabajos: [{ id: 't1', bloqueId: 'x2', campos: { c0: 'Cuando aprendí a andar en bicicleta' }, texto: '', tieneImagen: false, fecha: '2026-10-27 10:00' }],
       emergentes: [{ titulo: '¿No tienes sueños claros?', texto: 'Piensa en qué te gusta hacer en tu tiempo libre.', disparador: 'boton', icono: '💭' }], materiales: [], cuestionarios: cuestionarios.slice(0, 1) }),
     hilos: () => yo.rol === 'admin' ? [{ hilo: 'H:EST:1', titulo: 'Camila Ejemplo', sub: 'Estudiante · 8° A', ultimo: '¿Puedo cambiar mi respuesta?', fecha: '2026-10-27 11:00', noLeidos: 2 }] : [{ hilo: 'H:' + yo.uid, titulo: 'Equipo de Orientación', sub: 'Profesor jefe · Orientación · UTP', ultimo: '¡Claro que sí!', fecha: '2026-10-27 11:05', noLeidos: 1 }],
     hilo: () => ({ titulo: yo.rol === 'admin' ? 'Camila Ejemplo' : 'Equipo de Orientación', sub: '', mensajes: [{ texto: 'Hola, ¿puedo cambiar mi respuesta de la E1?', fecha: '2026-10-27 11:00', deNombre: 'Camila Ejemplo', deRol: 'estudiante', propio: yo.rol !== 'admin' }, { texto: '¡Claro que sí! Mientras esté habilitada puedes editarla.', fecha: '2026-10-27 11:05', deNombre: 'Profesora Jefe Ejemplo', deRol: 'docente', propio: yo.rol === 'admin' }] }),
@@ -54,7 +56,9 @@
     cursos: () => [{ curso: '8° A', estudiantes: 32 }, { curso: '8° B', estudiantes: 30 }],
     reporteCurso: () => curso, analisis: () => analisis, historialAnalisis: () => [],
     usuarios: () => [{ id: 'PER:1', rut: '12345678-5', nombre: 'Orientadora Ejemplo', rol: 'admin', activo: true, cursos: '' }, { id: 'EST:1', rut: '11111111-1', nombre: 'Camila Ejemplo', rol: 'estudiante', activo: true, debeCambiar: true, curso: '8° A' }],
-    config: () => ({ nombreColegio: 'Colegio Marina de Chile', ciudad: 'Concepción', unidad: 'UTP', anio: '2026', apoderadoVeRetro: 'false', iaIncluirAbiertas: 'true', retencionMeses: '24', contactoPrivacidad: 'utp@colegio.cl', iaConfigurada: false, iaProveedor: 'anthropic' }),
+    config: () => ({ nombreColegio: 'Colegio Marina de Chile', ciudad: 'Concepción', unidad: 'UTP', anio: '2026', apoderadoVeRetro: 'false', iaIncluirAbiertas: 'true', retencionMeses: '24', contactoPrivacidad: 'utp@colegio.cl', urlPlataforma: 'https://script.google.com/macros/s/EJEMPLO/exec', iaConfigurada: false, iaProveedor: 'anthropic' }),
+    perfiles: () => ({ perfiles: [{ id: 'admin', nombre: 'Administración', base: 'funcionario', permisos: [], fijo: true, sistema: true, usuarios: 1 }, { id: 'docente', nombre: 'Docente', base: 'funcionario', permisos: ['cursos.ver','reportes'], sistema: true, usuarios: 4 }, { id: 'Pab12', nombre: 'Orientador/a', base: 'funcionario', permisos: ['cursos.ver','todosLosCursos','reportes','analisis'], sistema: false, usuarios: 0 }, { id: 'alumno', nombre: 'Alumno/a', base: 'alumno', permisos: ['sesiones','ejercicios'], sistema: true, usuarios: 60 }, { id: 'adulto', nombre: 'Adulto responsable', base: 'adulto', permisos: ['sesiones'], sistema: true, usuarios: 90 }], catalogo: { funcionario: [['cursos.ver','Ver cursos'],['todosLosCursos','Todos los cursos'],['reportes','Reportes'],['analisis','Análisis']], alumno: [['sesiones','Ver sesiones'],['ejercicios','Ejercicios']], adulto: [['sesiones','Ver manual']] } }),
+    matrizCuestionario: () => ({ codigo: 'E1', titulo: 'Encuesta 1', columnas: [{ clave: 'RUT', titulo: 'RUT', ayuda: 'con guion' }, { clave: 'P1', titulo: 'P1 | Tengo claro…', ayuda: '1=…' }], instruccionesIA: 'Actúa como asistente de tabulación…' }),
     auditoria: () => [{ fecha: '2026-10-27 10:00', usuario: 'PER:12345678-5', rol: 'admin', accion: 'login', detalle: 'personal' }]
   };
   function run(handlers) {
@@ -63,8 +67,8 @@
       if (fn === 'withFailureHandler') return h => run(Object.assign({}, handlers, { fail: h }));
       return (...args) => setTimeout(() => {
         let out;
-        if (fn === 'infoPublica') out = JSON.stringify({ colegio: 'Colegio Marina de Chile', ciudad: 'Concepción', unidad: 'Unidad Técnica Pedagógica', anio: '2026', contactoPrivacidad: 'utp@colegio.cl', retencionMeses: 24, imagenes: window.MOCK_IMG || {} });
-        else if (fn === 'login') { yo = perfiles[args[2]] || perfiles.estudiante; out = { ok: true, token: 't', perfil: yo }; }
+        if (fn === 'infoPublica') out = JSON.stringify({ colegio: 'Colegio Marina de Chile', ciudad: 'Concepción', unidad: 'Unidad Técnica Pedagógica', anio: '2026', contactoPrivacidad: 'utp@colegio.cl', retencionMeses: 24, urlPlataforma: 'https://script.google.com/macros/s/EJEMPLO/exec', imagenes: window.MOCK_IMG || {} });
+        else if (fn === 'login') { yo = perfiles[args[2] === 'adulto' ? 'madre' : args[2]] || perfiles.estudiante; out = { ok: true, token: 't', perfil: yo }; }
         else if (fn === 'logout') out = { ok: true };
         else if (fn === 'api') { const f = R[args[0].accion]; out = JSON.stringify({ ok: true, data: f ? f(args[0].datos) : {} }); }
         handlers.ok && handlers.ok(out);

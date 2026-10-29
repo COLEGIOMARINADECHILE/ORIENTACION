@@ -294,7 +294,8 @@ function reporteSesion_(ses, d) {
   var s = buscar_('Sesiones', 'id', d.sesionId);
   if (!s) throw new Error('Sesión no encontrada.');
   var idBase = s.baseId || s.id;
-  var cs = todos_('Cuestionarios').filter(function (c) { return c.sesionId === idBase || c.sesionId === s.id; });
+  var codigos = json_(s.bloques, []).filter(function (b) { return b.tipo === 'cuestionario'; }).map(function (b) { return b.codigo; });
+  var cs = todos_('Cuestionarios').filter(function (c) { return c.sesionId === idBase || c.sesionId === s.id || codigos.indexOf(c.codigo) >= 0; });
   var ests = todos_('Estudiantes').filter(function (e) { return normCurso_(e.curso) === normCurso_(d.curso); });
   var nombres = {}; ests.forEach(function (e) { nombres[e.rut] = e.nombre; });
   var out = { sesion: { titulo: s.titulo, numero: s.numero, objetivo: s.objetivo }, curso: d.curso, estudiantes: ests.length, cuestionarios: [] };
@@ -321,6 +322,7 @@ function reporteSesion_(ses, d) {
     out.cuestionarios.push({ codigo: c.codigo, titulo: c.titulo, audiencia: c.audiencia, respondieron: rs.length, preguntas: resumen,
       filas: rs.map(function (r) { return { nombre: nombres[r.estudianteRut] || r.estudianteRut, quien: r.usuarioId.split(':')[0] === 'EST' ? 'Estudiante' : r.usuarioId.split(':').pop(), fecha: r.fecha, respuestas: json_(r.respuestas, {}), puntajes: json_(r.puntajes, {}) }; }) });
   });
+  out.trabajos = trabajosDeSesion_(s, d.curso, nombres);
   auditar_(ses, 'reporte_sesion', d.sesionId + ' ' + d.curso);
   return out;
 }
@@ -402,7 +404,7 @@ function obtenerAnalisis_(ses, d) {
   var motor = motorIA_();
   var huella = sha_(canon_(entrada) + '|' + VERSION_ANALISIS + '|' + motor);
   var vigente = vigenteDe_(clave);
-  var forzar = !!d.forzar && ses.rol === 'admin';
+  var forzar = !!d.forzar && esAdmin_(ses);
   if (vigente && vigente.hashDatos === huella && !forzar) return vistaAnalisis_(vigente, entrada, false);
   if (vigente && !d.generar && !forzar) {
     var v = vistaAnalisis_(vigente, entrada, true);
@@ -449,7 +451,7 @@ function historialAnalisis_(ses) {
   return todos_('Analisis').filter(function (a) {
     if (a.clave.indexOf('EST:') === 0) { var e = ests[a.clave.slice(4)]; return e && cursoAsignado_(ses, e.curso); }
     var c = listarCursosTodos_().filter(function (x) { return 'CUR:' + normCurso_(x) === a.clave; })[0];
-    return c ? cursoAsignado_(ses, c) : ses.rol === 'admin';
+    return c ? cursoAsignado_(ses, c) : esAdmin_(ses);
   }).map(function (a) {
     var e = a.clave.indexOf('EST:') === 0 ? ests[a.clave.slice(4)] : null;
     return { id: a.id, clave: a.clave, tipo: e ? 'estudiante' : 'curso', rut: e ? e.rut : '',

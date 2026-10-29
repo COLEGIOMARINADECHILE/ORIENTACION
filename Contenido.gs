@@ -21,7 +21,7 @@ function veAudiencia_(ses, aud) {
 function cursoDeSesion_(ses) { return listaCursos_(ses.cursos)[0] || ''; }
 
 function veCursos_(ses, cursos) {
-  if (ses.rol === 'admin') return true;
+  if (esPersonal_(ses) && esAdmin_(ses)) return true;
   if (!listaCursos_(cursos).length) return true;
   return listaCursos_(ses.cursos).some(function (c) { return cursoEn_(c, cursos); });
 }
@@ -43,7 +43,7 @@ function listarSesiones_(ses) {
     return veCursos_(ses, s.cursos);
   });
   // Si existe una variante para mis cursos, oculta la sesión base.
-  if (ses.rol !== 'admin') {
+  if (!(esPersonal_(ses) && esAdmin_(ses))) {
     var reemplazadas = {};
     visibles.forEach(function (s) { if (s.baseId) reemplazadas[s.baseId] = true; });
     visibles = visibles.filter(function (s) { return !reemplazadas[s.id]; });
@@ -63,26 +63,38 @@ function obtenerSesion_(ses, d) {
   var v = vistaSesion_(s);
   v.materiales = listarMateriales_(ses, { sesionId: s.baseId || s.id }).concat(
     s.baseId ? listarMateriales_(ses, { sesionId: s.id }) : []);
+  // Cuestionarios de la sesión y también los que se incrustan como bloque (por código).
+  var codigos = v.bloques.filter(function (b) { return b.tipo === 'cuestionario' && b.codigo; }).map(function (b) { return b.codigo; });
   v.cuestionarios = listarCuestionarios_(ses).filter(function (c) {
-    return c.sesionId === s.id || c.sesionId === s.baseId;
+    return c.sesionId === s.id || c.sesionId === s.baseId || codigos.indexOf(c.codigo) >= 0;
   });
+  if (!esPersonal_(ses)) v.misTrabajos = misTrabajos_(ses, [s.id, s.baseId]);
   return v;
+}
+
+function urlSegura_(u) {
+  u = String(u || '').trim();
+  return /^(https:\/\/|drive:[\w-]+$)/i.test(u) ? u.slice(0, 500) : '';
 }
 
 function guardarSesion_(ses, d) {
   var lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
-    var bloques = (d.bloques || []).slice(0, 60).map(function (b) {
-      return { tipo: String(b.tipo || 'texto'), titulo: String(b.titulo || '').slice(0, 200),
-        texto: String(b.texto || '').slice(0, 8000), url: String(b.url || '').slice(0, 500) };
+    var bloques = (d.bloques || []).slice(0, 80).map(function (b, i) {
+      return { id: String(b.id || nuevoId_('b')).slice(0, 24), tipo: String(b.tipo || 'texto'),
+        titulo: String(b.titulo || '').slice(0, 200), texto: String(b.texto || '').slice(0, 12000),
+        url: urlSegura_(b.url), img: urlSegura_(b.img), pie: String(b.pie || '').slice(0, 300), video: urlSegura_(b.video),
+        campos: (Array.isArray(b.campos) ? b.campos : []).map(function (c) { return String(c).slice(0, 300); }).filter(String).slice(0, 40),
+        foto: !!b.foto, codigo: String(b.codigo || '').slice(0, 30) };
     });
+    if (JSON.stringify(bloques).length > 48000) throw new Error('La sesión es demasiado larga para guardarse. Divídala en dos sesiones.');
     var emergentes = (d.emergentes || []).slice(0, 20).map(function (e) {
       return { titulo: String(e.titulo || '').slice(0, 200), texto: String(e.texto || '').slice(0, 3000),
         disparador: e.disparador === 'abrir' ? 'abrir' : 'boton', icono: String(e.icono || '💡').slice(0, 4) };
     });
     var base = d.id ? buscar_('Sesiones', 'id', d.id) : null;
     var reg;
-    if (base && ses.rol !== 'admin') {
+    if (base && !esAdmin_(ses)) {
       // Docente o asistente: solo puede editar dentro de sus cursos.
       var misCursos = listaCursos_(ses.cursos);
       if (!misCursos.length) throw new Error('No tiene cursos asignados.');
@@ -109,14 +121,16 @@ function guardarSesion_(ses, d) {
     } else {
       reg = { id: nuevoId_('S'), _nuevo: true, baseId: '', audiencia: d.audiencia || 'estudiantes',
         estado: d.estado || 'borrador', numero: d.numero || 0 };
-      reg.cursos = ses.rol === 'admin' ? (d.cursos || '') : (d.cursos || ses.cursos);
-      if (ses.rol !== 'admin' && !listaCursos_(reg.cursos).every(function (c) { return cursoAsignado_(ses, c); }))
+      reg.cursos = esAdmin_(ses) ? (d.cursos || '') : (d.cursos || ses.cursos);
+      if (!esAdmin_(ses) && !listaCursos_(reg.cursos).every(function (c) { return cursoAsignado_(ses, c); }))
         throw new Error('Solo puede crear sesiones para sus cursos.');
-      if (ses.rol !== 'admin' && !listaCursos_(reg.cursos).length) reg.cursos = ses.cursos;
+      if (!esAdmin_(ses) && !listaCursos_(reg.cursos).length) reg.cursos = ses.cursos;
     }
     reg.titulo = String(d.titulo || reg.titulo || 'Sesión sin título').slice(0, 200);
     reg.objetivo = String(d.objetivo !== undefined ? d.objetivo : reg.objetivo || '').slice(0, 1000);
-    reg.imagen = String(d.imagen !== undefined ? d.imagen : reg.imagen || '').slice(0, 500);
+    // Portada: un tema ilustrado (brujula, estrella…), una imagen subida (drive:ID) o una URL https.
+    var img = String(d.imagen !== undefined ? d.imagen : reg.imagen || '');
+    reg.imagen = /^[a-z]+$/.test(img) ? img : urlSegura_(img);
     reg.bloques = bloques;
     reg.emergentes = emergentes;
     reg.autorId = ses.uid; reg.autorNombre = ses.nombre; reg.actualizado = ahora_();
@@ -152,7 +166,7 @@ var MAX_ARCHIVO = 15 * 1024 * 1024;
 
 function guardarMaterial_(ses, d) {
   var cursos = d.cursos || '';
-  if (ses.rol !== 'admin') {
+  if (!esAdmin_(ses)) {
     if (!listaCursos_(cursos).length) cursos = ses.cursos;
     if (!listaCursos_(cursos).every(function (c) { return cursoAsignado_(ses, c); }))
       throw new Error('Solo puede compartir material con sus cursos.');
@@ -181,7 +195,7 @@ function guardarMaterial_(ses, d) {
 function eliminarMaterial_(ses, d) {
   var m = buscar_('Materiales', 'id', d.id);
   if (!m) throw new Error('Material no encontrado.');
-  if (ses.rol !== 'admin' && m.autorId !== ses.uid) throw new Error('Solo puede eliminar el material que usted subió.');
+  if (!esAdmin_(ses) && m.autorId !== ses.uid) throw new Error('Solo puede eliminar el material que usted subió.');
   if (m.driveId) { try { DriveApp.getFileById(m.driveId).setTrashed(true); } catch (e) {} }
   eliminar_('Materiales', m);
   auditar_(ses, 'eliminar_material', d.id);
@@ -264,7 +278,7 @@ function guardarCuestionario_(ses, d) {
 function habilitarCuestionario_(ses, d) {
   var c = buscar_('Cuestionarios', 'id', d.id);
   if (!c) throw new Error('Cuestionario no encontrado.');
-  if (ses.rol === 'admin' && !d.curso) {
+  if (esAdmin_(ses) && !d.curso) {
     // Administración: habilitar o desactivar para una lista de cursos (vacía = todos).
     c.habilitado = d.habilitado ? 'true' : 'false';
     if (d.cursos !== undefined) c.cursos = d.cursos;
@@ -367,7 +381,7 @@ function guardarRetro_(ses, d) {
   var texto = String(d.texto || '').trim();
   if (!texto) throw new Error('Escriba la retroalimentación.');
   var r = { id: nuevoId_('F'), estudianteRut: d.rut, autorId: ses.uid, autorNombre: ses.nombre,
-    texto: texto.slice(0, 4000), visibleApoderado: ses.rol === 'admin' && d.visibleApoderado ? 'true' : 'false',
+    texto: texto.slice(0, 4000), visibleApoderado: tienePermiso_(ses, 'retro.visibilidad') && d.visibleApoderado ? 'true' : 'false',
     fecha: ahora_() };
   insertar_('Retroalimentacion', r);
   auditar_(ses, 'retroalimentar', d.rut);

@@ -103,7 +103,7 @@ function audienciaAviso_(paraTipo) {
 function listarAvisos_(ses) {
   return filtrar_('Mensajes', function (m) {
     if (!/^aviso_/.test(m.paraTipo)) return false;
-    if (esPersonal_(ses)) return ses.rol === 'admin' || !listaCursos_(m.curso).length || listaCursos_(m.curso).some(function (c) { return cursoAsignado_(ses, c); });
+    if (esPersonal_(ses)) return esAdmin_(ses) || !listaCursos_(m.curso).length || listaCursos_(m.curso).some(function (c) { return cursoAsignado_(ses, c); });
     if (!veAudiencia_(ses, audienciaAviso_(m.paraTipo))) return false;
     return cursoEn_(cursoDeSesion_(ses), m.curso);
   }).map(function (m) {
@@ -121,7 +121,7 @@ function publicarAviso_(ses, d) {
   var texto = String(d.texto || '').trim();
   if (!texto) throw new Error('Escriba el aviso.');
   var cursos = listaCursos_(d.cursos);
-  if (ses.rol !== 'admin') {
+  if (!esAdmin_(ses)) {
     if (!cursos.length) cursos = listaCursos_(ses.cursos);
     cursos.forEach(function (c) { exigirCurso_(ses, c); });
   }

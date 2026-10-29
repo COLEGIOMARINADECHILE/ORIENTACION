@@ -14,8 +14,22 @@ function vistaUsuario_(u) {
     id: u.id, rut: u.rut, tipo: u.tipo, nombre: u.nombre, rol: u.rol, cursos: u.cursos,
     estudianteRut: u.estudianteRut, parentesco: u.parentesco, email: u.email,
     activo: String(u.activo) !== 'false', debeCambiar: String(u.debeCambiar) === 'true',
-    ultimoAcceso: u.ultimoAcceso, consentimiento: u.consentimiento
+    ultimoAcceso: u.ultimoAcceso, consentimiento: u.consentimiento, perfilId: u.perfilId,
+    perfilClave: u.rol === 'personalizado' ? 'perfil:' + u.perfilId : u.rol
   };
+}
+
+/** Convierte la elección del formulario ("docente", "admin" o "perfil:ID") en rol + perfil. */
+function resolverRol_(ses, valor) {
+  valor = String(valor || '');
+  if (valor === 'admin' && ses.rol !== 'admin') throw new Error('Solo un/a administrador/a puede otorgar el perfil Administración.');
+  if (['admin', 'docente', 'asistente'].indexOf(valor) >= 0) return { rol: valor, perfilId: '' };
+  if (valor.indexOf('perfil:') === 0) {
+    var p = perfilPorId_(valor.slice(7));
+    if (!p || p.base !== 'funcionario') throw new Error('Perfil no válido.');
+    return { rol: 'personalizado', perfilId: p.id };
+  }
+  throw new Error('Perfil no válido.');
 }
 
 function listarUsuarios_(ses, d) {
@@ -47,9 +61,11 @@ function guardarUsuario_(ses, d) {
   if (u) {
     if (d.nombre) u.nombre = String(d.nombre).trim();
     if (ROLES_PERSONAL.indexOf(u.rol) >= 0) {
-      if (d.rol && ROLES_PERSONAL.indexOf(d.rol) >= 0) {
-        if (u.id === ses.uid && d.rol !== 'admin') throw new Error('No puede quitarse a sí mismo el rol de administrador.');
-        u.rol = d.rol;
+      if (u.rol === 'admin' && ses.rol !== 'admin') throw new Error('Solo un/a administrador/a puede modificar a otro administrador.');
+      if (d.rol) {
+        var r = resolverRol_(ses, d.rol);
+        if (u.id === ses.uid && u.rol === 'admin' && r.rol !== 'admin') throw new Error('No puede quitarse a sí mismo el perfil de administración.');
+        u.rol = r.rol; u.perfilId = r.perfilId;
       }
       if (d.cursos !== undefined) u.cursos = d.cursos;
     }
@@ -81,12 +97,12 @@ function guardarUsuario_(ses, d) {
     return vistaUsuario_(n);
   }
   if (!rut) throw new Error('RUT no válido.');
-  if (ROLES_PERSONAL.indexOf(d.rol) < 0) throw new Error('Rol no válido.');
+  var rr = resolverRol_(ses, d.rol);
   if (buscar_('Usuarios', 'id', 'PER:' + rut)) throw new Error('Ya existe un usuario con ese RUT.');
   var temporal = claveTemporal_();
   var s2 = nuevaSal_();
   var nu = {
-    id: 'PER:' + rut, rut: rut, tipo: 'personal', nombre: String(d.nombre || '').trim(), rol: d.rol,
+    id: 'PER:' + rut, rut: rut, tipo: 'personal', nombre: String(d.nombre || '').trim(), rol: rr.rol, perfilId: rr.perfilId,
     cursos: d.cursos || '', email: d.email || '', salt: s2, hash: hashClave_(d.clave || temporal, s2),
     activo: 'true', debeCambiar: 'true', creado: ahora_()
   };
@@ -108,6 +124,7 @@ function eliminarUsuario_(ses, d) {
   if (d.id === ses.uid) throw new Error('No puede eliminar su propia cuenta.');
   var u = buscar_('Usuarios', 'id', d.id);
   if (!u) throw new Error('Usuario no encontrado.');
+  if (u.rol === 'admin' && ses.rol !== 'admin') throw new Error('Solo un/a administrador/a puede eliminar a otro administrador.');
   eliminar_('Usuarios', u);
   auditar_(ses, 'eliminar_usuario', d.id);
   return { ok: true };
@@ -116,6 +133,7 @@ function eliminarUsuario_(ses, d) {
 function restablecerClave_(ses, d) {
   var u = buscar_('Usuarios', 'id', d.id);
   if (!u) throw new Error('Usuario no encontrado.');
+  if (u.rol === 'admin' && ses.rol !== 'admin') throw new Error('Solo un/a administrador/a puede restablecer la clave de otro administrador.');
   var clave, mostrar = '';
   if (u.estudianteRut) {
     var est = buscar_('Estudiantes', 'rut', u.estudianteRut);
@@ -250,13 +268,19 @@ function eliminarEstudiante_(ses, d) {
 /** Cursos visibles para el personal, con conteo de estudiantes. */
 function listarCursos_(ses) {
   var mapa = {};
+  // Cursos creados por la administración (aunque aún no tengan estudiantes).
+  todos_('Cursos').forEach(function (c) {
+    if (String(c.activo) === 'false' || !cursoAsignado_(ses, c.curso)) return;
+    mapa[normCurso_(c.curso)] = { curso: c.curso, estudiantes: 0, nivel: c.nivel, descripcion: c.descripcion,
+      profesorJefe: c.profesorJefe, registrado: true };
+  });
   todos_('Estudiantes').forEach(function (e) {
     if (!cursoAsignado_(ses, e.curso)) return;
     var k = normCurso_(e.curso);
     if (!mapa[k]) mapa[k] = { curso: e.curso, estudiantes: 0 };
     mapa[k].estudiantes++;
   });
-  if (ses.rol !== 'admin') {
+  if (!esAdmin_(ses)) {
     listaCursos_(ses.cursos).forEach(function (c) {
       var k = normCurso_(c);
       if (!mapa[k]) mapa[k] = { curso: c, estudiantes: 0 };
@@ -273,7 +297,7 @@ function estudiantesCurso_(ses, d) {
     .map(function (e) {
       var r = resp.filter(function (x) { return x.estudianteRut === e.rut && x.usuarioId === 'EST:' + e.rut; });
       var v = { rut: e.rut, nombre: e.nombre, sexo: e.sexo, curso: e.curso, respondidos: r.length };
-      if (ses.rol === 'admin') {
+      if (tienePermiso_(ses, 'usuarios')) {
         v.fechaNac = e.fechaNac; v.nombrePadre = e.nombrePadre; v.nombreMadre = e.nombreMadre; v.nombreTutor = e.nombreTutor;
       }
       return v;

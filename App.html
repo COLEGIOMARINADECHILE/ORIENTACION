@@ -12,8 +12,17 @@ const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const h = s => String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const COLORES = ['#0b2a66', '#e3b505', '#c8553d', '#1f9e8f', '#6c4ab6', '#0f4c9c'];
 const EMOJI = { brujula: '🧭', estrella: '⭐', lupa: '🔎', balanza: '⚖️', bandera: '🚩', camino: '🛤️', familia: '🏡', guia: '📘' };
-const ROL_TXT = { admin: 'Administrador/a', docente: 'Docente', asistente: 'Asistente de la educación', estudiante: 'Estudiante', apoderado: 'Apoderado/a' };
-const BLOQUE = { texto: ['📄', 'Contenido', 'libro'], caso: ['🧑‍🎓', 'Experiencia de vida', 'grupo'], psicologia: ['🧠', 'Lo que dice la psicología', 'ampolleta'], ejercicio: ['✏️', 'Ejercicio', 'lapiz'], recuerde: ['📌', 'Recuerda', 'chincheta'], enlace: ['🔗', 'Enlace', 'enlace'], video: ['🎬', 'Video', 'video'], imagen: ['🖼️', 'Imagen', 'imagen'] };
+const ROL_TXT = { admin: 'Funcionario · Administración', docente: 'Funcionario · Docente', asistente: 'Funcionario · Asistente', personalizado: 'Funcionario', estudiante: 'Alumno/a', apoderado: 'Adulto responsable' };
+const BLOQUE = { texto: ['📄', 'Contenido', 'libro'], caso: ['🧑‍🎓', 'Experiencia de vida', 'grupo'], psicologia: ['🧠', 'Lo que dice la psicología', 'ampolleta'], ejercicio: ['✏️', 'Ejercicio', 'lapiz'], recuerde: ['📌', 'Recuerde', 'chincheta'], cuestionario: ['📝', 'Encuesta', 'tarea'], enlace: ['🔗', 'Enlace', 'enlace'], video: ['🎬', 'Video', 'video'], imagen: ['🖼️', 'Imagen', 'imagen'] };
+const LIBS = { chart: 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js', xlsx: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js' };
+const _scripts = {};
+function cargarScript(url) {
+  if (!_scripts[url]) _scripts[url] = new Promise((res, rej) => { const s = document.createElement('script'); s.src = url; s.onload = res; s.onerror = () => rej(new Error('No se pudo cargar una librería. Revise su conexión.')); document.head.appendChild(s); });
+  return _scripts[url];
+}
+const cargarXLSX = () => window.XLSX ? Promise.resolve() : cargarScript(LIBS.xlsx);
+const puede = p => !!(E.perfil && (E.perfil.permisos || []).includes(p));
+const rolTexto = p => p.rol === 'personalizado' ? 'Funcionario · ' + (p.perfilNombre || '') : (ROL_TXT[p.rol] || '');
 const DIM = [['claridad', 'Claridad del proyecto'], ['conocimiento', 'Conocimiento de opciones'], ['autonomia', 'Autonomía'], ['certeza', 'Certeza y plan']];
 const RIASEC_T = { R: 'Realista', I: 'Investigador', A: 'Artístico', S: 'Social', E: 'Emprendedor', C: 'Convencional' };
 
@@ -27,10 +36,29 @@ const local = {
 };
 
 /* ---------- Comunicación con el servidor ---------- */
+/**
+ * Llama al servidor. Dentro de Apps Script usa google.script.run; publicada en
+ * GitHub Pages usa la API (doPost) de la URL definida en window.API_URL.
+ * En ambos casos los datos se guardan solo en Apps Script.
+ */
 function gs(fn, ...args) {
-  return new Promise((res, rej) => {
-    google.script.run.withSuccessHandler(res).withFailureHandler(e => rej(new Error(e && e.message || 'Error de conexión')))[fn](...args);
-  });
+  if (typeof google !== 'undefined' && google.script && google.script.run) {
+    return new Promise((res, rej) => {
+      google.script.run.withSuccessHandler(res).withFailureHandler(e => rej(new Error(e && e.message || 'Error de conexión')))[fn](...args);
+    });
+  }
+  if (!window.API_URL) return Promise.reject(new Error('Falta configurar la dirección del servidor (API_URL).'));
+  return fetch(window.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ fn, args }) })
+    .then(r => { if (!r.ok) throw new Error('No se pudo conectar con el servidor (' + r.status + ').'); return r.json(); })
+    .catch(e => { throw new Error(/conectar/.test(e.message) ? e.message : 'No se pudo conectar con el servidor. Revise su conexión a internet o la implementación de Apps Script.'); })
+    .then(o => { if (o.error) throw new Error(o.error); return o.r; });
+}
+async function cargarInfo() {
+  try { E.info = JSON.parse(await gs('infoPublica')); } catch (e) { E.info = E.info && E.info.colegio ? E.info : { colegio: 'Colegio Marina de Chile', ciudad: 'Concepción' }; E.info.sinConexion = e.message; }
+  // Imágenes incluidas en la página de GitHub: se usan si no se subieron otras en Configuración.
+  const loc = window.IMAGENES_LOCALES || {};
+  E.info.imagenes = E.info.imagenes || {};
+  ['logo', 'portada', 'colegio'].forEach(k => { if (!E.info.imagenes[k] && loc[k]) E.info.imagenes[k] = loc[k]; });
 }
 async function api(accion, datos) {
   const raw = await gs('api', { token: E.token, accion, datos: datos || {} });
@@ -79,6 +107,11 @@ function descargar(nombre, contenido, mime) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 800);
 }
+const enlacePublico = () => E.info.urlGithub || (/github\.io/.test(location.hostname) ? location.origin + location.pathname : '') || E.info.urlPlataforma || '';
+async function copiarTexto(t, msg) {
+  try { await navigator.clipboard.writeText(t); toast(msg || 'Enlace copiado'); }
+  catch (e) { prompt('Copie el enlace (Ctrl+C):', t); }
+}
 function csv(filas) {
   const esc = v => { const s = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   return '﻿' + filas.map(f => f.map(esc).join(';')).join('\n');
@@ -98,12 +131,13 @@ function imprimir(nodo, titulo) {
   if (!w) { toast('Permite las ventanas emergentes para imprimir o guardar en PDF.', true); return; }
   const estilos = $$('style').map(s => s.outerHTML).join('');
   w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${h(titulo)}</title>${estilos}<style>body{background:#fff;padding:24px}.tarjeta{box-shadow:none}</style></head><body data-theme="light">
-    <div class="fila" style="border-bottom:3px solid #e3b505;padding-bottom:10px;margin-bottom:16px">${logoHTML(42)}<div><b>${h(E.info.colegio)}</b><br><span class="muted peq">${h(E.info.unidad)} · Documento confidencial (Ley 21.719)</span></div></div>
+    <div class="fila" style="border-bottom:3px solid #e3b505;padding-bottom:10px;margin-bottom:16px">${logoHTML(42)}<div><b>${h(E.info.colegio)}</b><br><span class="muted peq">${h(E.info.unidad)} · Documento confidencial (Ley 21.719)</span>${enlacePublico() ? `<br><span class="muted peq">Plataforma: ${h(enlacePublico())}</span>` : ''}</div></div>
     <h1>${h(titulo)}</h1><p class="muted peq">Generado el ${new Date().toLocaleString('es-CL')} por ${h(E.perfil.nombre)}</p>${clon.innerHTML}</body></html>`);
   w.document.close(); setTimeout(() => w.print(), 600);
 }
 function graficar(canvas, cfg) {
-  if (!window.Chart || !canvas) return;
+  if (!canvas) return;
+  if (!window.Chart) { cargarScript(LIBS.chart).then(() => { if (canvas.isConnected) graficar(canvas, cfg); }).catch(() => {}); return; }
   Chart.defaults.font.family = "'Plus Jakarta Sans', system-ui, sans-serif";
   Chart.defaults.color = getComputedStyle(document.body).getPropertyValue('--tinta-2').trim() || '#4a5470';
   cfg.options = Object.assign({ responsive: true, maintainAspectRatio: false, animation: { duration: 500 } }, cfg.options || {});
@@ -117,6 +151,46 @@ function opcionesCursos(cursos, sel) {
   return cursos.map(c => `<option ${c.curso === sel ? 'selected' : ''} value="${h(c.curso)}">${h(c.curso)} (${c.estudiantes})</option>`).join('');
 }
 async function misCursos() { if (!E._cursos) E._cursos = await api('cursos'); return E._cursos; }
+
+/* ---------- Imágenes: compresión antes de subir y carga diferida ---------- */
+/** Reduce la imagen (máx. lado en px) y la convierte a WEBP/JPEG liviano antes de subirla. */
+function comprimirImagen(file, max, calidad) {
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, (max || 1400) / Math.max(img.width, img.height));
+      const cv = document.createElement('canvas'); cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+      let d = cv.toDataURL('image/webp', calidad || .8);
+      if (!/^data:image\/webp/.test(d)) d = cv.toDataURL('image/jpeg', calidad || .8);
+      res({ mime: d.slice(5, d.indexOf(';')), base64: d.split(',')[1], nombre: file.name.replace(/\.[^.]+$/, '') + (/webp/.test(d) ? '.webp' : '.jpg') });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('No se pudo leer la imagen.')); };
+    img.src = url;
+  });
+}
+/** <img> para una referencia: URL https directa o "drive:ID" (se resuelve después con cargarImagenes). */
+function imgRef(ref, alt, clase) {
+  if (!ref) return '';
+  if (/^drive:/.test(ref)) return `<img class="${clase || ''}" data-img="${h(ref)}" alt="${h(alt || '')}" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">`;
+  return `<img class="${clase || ''}" src="${h(ref)}" alt="${h(alt || '')}" loading="lazy">`;
+}
+async function cargarImagenes(raiz) {
+  const nodos = $$('img[data-img]', raiz || document);
+  if (!nodos.length) return;
+  const faltan = [];
+  nodos.forEach(n => { const c = local.pget('img:' + n.dataset.img, null); if (c) n.src = c; else if (!faltan.includes(n.dataset.img)) faltan.push(n.dataset.img); });
+  for (let i = 0; i < faltan.length; i += 12) {
+    try {
+      const r = await api('imagenes', { ids: faltan.slice(i, i + 12) });
+      Object.keys(r).forEach(k => { local.pset('img:' + k, r[k]); $$(`img[data-img="${k}"]`, raiz || document).forEach(n => n.src = r[k]); });
+    } catch (e) {}
+  }
+}
+/** Portada de una sesión: tema ilustrado o imagen propia. */
+function portadaSesion(s, clase) {
+  return /^[a-z]+$/.test(s.imagen || '') || !s.imagen ? escena(s.imagen || 'guia', clase) : imgRef(s.imagen, s.titulo, 'portada-img ' + (clase || ''));
+}
 
 /* ---------- Logos e ilustraciones ---------- */
 function logoHTML(alto) {
@@ -150,12 +224,12 @@ const timonFondo =`<svg class="timon" viewBox="0 0 100 100" aria-hidden="true">$
  * INGRESO
  * ===================================================================== */
 const PERFILES = [
-  ['estudiante', 'mochila', 'Estudiante', '#e3b505'], ['madre', 'mujer', 'Madre', '#c8553d'], ['padre', 'hombre', 'Padre', '#0f4c9c'],
-  ['tutor', 'manos', 'Tutor/a', '#1f9e8f'], ['personal', 'colegio', 'Equipo', '#6c4ab6']
+  ['estudiante', 'mochila', 'Alumno/a', '#e3b505'], ['adulto', 'manos', 'Adulto responsable', '#c8553d'], ['personal', 'colegio', 'Funcionario', '#6c4ab6']
 ];
 function pantallaLogin(msg) {
   limpiarGraficos();
-  const tipo = local.pget('ultimoPerfil', 'estudiante');
+  let tipo = local.pget('ultimoPerfil', 'estudiante');
+  if (!PERFILES.some(p => p[0] === tipo)) tipo = ['madre', 'padre', 'tutor'].includes(tipo) ? 'adulto' : 'estudiante';
   const foto = E.info.imagenes && E.info.imagenes.colegio ? `<div class="foto" style="background-image:url('${h(E.info.imagenes.colegio)}')"></div>` : '';
   $('#app').innerHTML = `
   <main class="login">
@@ -187,9 +261,10 @@ function pantallaLogin(msg) {
   </main>`;
   let sel = tipo;
   const ajustar = () => {
-    $('#lblRut').textContent = sel === 'personal' ? 'Tu RUT' : 'RUT del estudiante';
-    $('#ayudaClave').textContent = sel === 'personal' ? 'Usa la clave que te entregó el administrador.' :
-      'La primera vez, la clave es la fecha de nacimiento del estudiante: DDMMAAAA (ej. 05032012). Cada perfil tiene su propia clave.';
+    $('#lblRut').textContent = sel === 'personal' ? 'Su RUT' : 'RUT del alumno o alumna';
+    $('#ayudaClave').textContent = sel === 'personal' ? 'Use la clave que le entregó la administración.' : sel === 'adulto' ?
+      'Madre, padre o tutor: la primera vez, la clave es la fecha de nacimiento del alumno/a (DDMMAAAA, ej. 05032012). Cada adulto tiene su propia clave.' :
+      'La primera vez, tu clave es tu fecha de nacimiento: DDMMAAAA (ej. 05032012).';
   };
   ajustar();
   $$('.perfil-op').forEach(b => b.onclick = () => { sel = b.dataset.tipo; $$('.perfil-op').forEach(x => x.setAttribute('aria-pressed', x === b)); ajustar(); });
@@ -198,19 +273,27 @@ function pantallaLogin(msg) {
   $('#fLogin').onsubmit = async e => {
     e.preventDefault();
     const b = $('#bIngresar'); b.disabled = true; b.textContent = 'Verificando…'; $('#errLogin').textContent = '';
-    try {
-      const r = await gs('login', $('#rut').value, $('#clave').value, sel);
+    const entrar = async (tipoLogin) => {
+      const r = await gs('login', $('#rut').value, $('#clave').value, tipoLogin);
+      if (r.elegir) {
+        // La clave coincide con más de un adulto (p. ej. madre y padre aún con la clave inicial).
+        const PAR = { madre: 'Madre', padre: 'Padre', tutor: 'Tutor/a' };
+        const c = modal(`<h2>¿Quién ingresa?</h2><p class="muted">Seleccione su nombre para continuar.</p><div class="grid">${r.elegir.map(x => `<button class="btn sec bloque" data-par="${h(x.tipo)}">${ic(x.tipo === 'madre' ? 'mujer' : x.tipo === 'padre' ? 'hombre' : 'manos', 18)} ${h(x.nombre)} · ${PAR[x.tipo] || x.tipo}</button>`).join('')}</div>`);
+        return new Promise((res, rej) => $$('[data-par]', c).forEach(x => x.onclick = () => { cerrarModal(); entrar(x.dataset.par).then(res, rej); }));
+      }
       if (!r.ok) throw new Error(r.error);
       local.pset('ultimoPerfil', sel);
       E.token = r.token; E.perfil = r.perfil; local.set('token', r.token);
       await postLogin();
-    } catch (err) { $('#errLogin').textContent = err.message; b.disabled = false; b.textContent = 'Ingresar'; }
+    };
+    try { await entrar(sel); }
+    catch (err) { $('#errLogin').textContent = err.message; b.disabled = false; b.textContent = 'Ingresar'; }
   };
 }
 
 async function postLogin() {
   if (!E.perfil.consentimiento) { verPrivacidad(true); return; }
-  if (E.perfil.debeCambiar && ['admin', 'docente', 'asistente'].includes(E.perfil.rol)) { renderShell(); ir('cuenta'); cambiarClaveModal(true); return; }
+  if (E.perfil.debeCambiar && esPersonal()) { renderShell(); ir('cuenta'); cambiarClaveModal(true); return; }
   renderShell(); ir(local.get('vista', 'inicio'));
 }
 
@@ -243,13 +326,18 @@ async function salir(expirada) {
 /* =====================================================================
  * ESTRUCTURA Y NAVEGACIÓN
  * ===================================================================== */
+/** Menú según los permisos del perfil (configurables en "Perfiles y permisos"). */
 function menu() {
   const r = E.perfil.rol;
-  if (r === 'estudiante') return [['inicio', 'inicio', 'Inicio'], ['sesiones', 'brujula', 'Sesiones'], ['cuestionarios', 'tarea', 'Cuestionarios'], ['resultados', 'grafico', 'Mis resultados'], ['mensajes', 'chat', 'Mensajes'], ['cuenta', 'usuario', 'Mi cuenta']];
-  if (r === 'apoderado') return [['inicio', 'inicio', 'Inicio'], ['sesiones', 'libro', 'Manual familias'], ['cuestionarios', 'tarea', 'Encuestas'], ['resultados', 'grafico', 'Resultados'], ['mensajes', 'chat', 'Mensajes'], ['cuenta', 'usuario', 'Mi cuenta']];
-  const m = [['inicio', 'inicio', 'Panel'], ['cursos', 'grupo', 'Mis cursos'], ['sesiones', 'brujula', 'Sesiones'], ['materiales', 'clip', 'Materiales'], ['cuestionarios', 'tarea', 'Cuestionarios'],
-    ['reportes', 'tendencia', 'Reportes'], ['analisis', 'chispa', 'Análisis IA'], ['mensajes', 'chat', 'Mensajes']];
-  if (r === 'admin') m.push(['sep', '', 'Administración'], ['usuarios', 'credencial', 'Usuarios'], ['carga', 'subir', 'Carga masiva'], ['config', 'ajustes', 'Configuración'], ['auditoria', 'escudo', 'Auditoría']);
+  const f = items => items.filter(i => !i[3] || i[3].some(puede));
+  if (r === 'estudiante') return f([['inicio', 'inicio', 'Inicio'], ['sesiones', 'brujula', 'Sesiones', ['sesiones']], ['cuestionarios', 'tarea', 'Cuestionarios', ['cuestionarios']], ['resultados', 'grafico', 'Mis resultados', ['resultados']], ['mensajes', 'chat', 'Mensajes', ['mensajes']], ['cuenta', 'usuario', 'Mi cuenta']]);
+  if (r === 'apoderado') return f([['inicio', 'inicio', 'Inicio'], ['sesiones', 'libro', 'Manual familias', ['sesiones']], ['cuestionarios', 'tarea', 'Encuestas', ['cuestionarios']], ['resultados', 'grafico', 'Resultados', ['resultados']], ['mensajes', 'chat', 'Mensajes', ['mensajes']], ['cuenta', 'usuario', 'Mi cuenta']]);
+  const m = f([['inicio', 'inicio', 'Panel'], ['cursos', 'grupo', 'Mis cursos', ['cursos.ver']], ['sesiones', 'brujula', 'Sesiones'], ['materiales', 'clip', 'Materiales', ['materiales']],
+    ['cuestionarios', 'tarea', 'Cuestionarios', ['cuestionarios.habilitar', 'cuestionarios.editar', 'resultados.cargar']],
+    ['reportes', 'tendencia', 'Reportes', ['reportes']], ['analisis', 'chispa', 'Análisis IA', ['analisis']], ['mensajes', 'chat', 'Mensajes', ['mensajes']]]);
+  const adm = f([['gestionCursos', 'colegio', 'Cursos', ['cursos.gestionar']], ['usuarios', 'credencial', 'Usuarios', ['usuarios']], ['perfiles', 'escudo', 'Perfiles y permisos', ['usuarios']],
+    ['carga', 'subir', 'Carga masiva', ['carga']], ['config', 'ajustes', 'Configuración', ['config']], ['auditoria', 'reloj', 'Auditoría', ['auditoria']]]);
+  if (adm.length) m.push(['sep', '', 'Administración'], ...adm);
   m.push(['cuenta', 'usuario', 'Mi cuenta']);
   return m;
 }
@@ -263,7 +351,7 @@ function renderShell() {
       <nav class="nav" aria-label="Menú principal">
         ${items.map(i => i[0] === 'sep' ? `<div class="nav-sep">${i[2]}</div>` : `<button data-v="${i[0]}"><span class="ico">${ic(i[1], 19)}</span>${i[2]}${i[0] === 'mensajes' ? '<span class="badge oculto" data-badge></span>' : ''}</button>`).join('')}
       </nav>
-      <div class="pie"><div class="pie-tarjeta"><div class="avatar">${h(iniciales(p.nombre))}</div><div><b>${h(p.nombre.split(' ').slice(0, 2).join(' '))}</b><span>${h(ROL_TXT[p.rol])}${p.estudianteNombre && p.rol === 'apoderado' ? ' de ' + h(p.estudianteNombre.split(' ')[0]) : ''}${p.cursos.length ? ' · ' + h(p.cursos.join(', ')) : ''}</span></div></div></div>
+      <div class="pie"><div class="pie-tarjeta"><div class="avatar">${h(iniciales(p.nombre))}</div><div><b>${h(p.nombre.split(' ').slice(0, 2).join(' '))}</b><span>${h(rolTexto(p))}${p.estudianteNombre && p.rol === 'apoderado' ? ' de ' + h(p.estudianteNombre.split(' ')[0]) : ''}${p.cursos.length ? ' · ' + h(p.cursos.join(', ')) : ''}</span></div></div></div>
       <svg class="lateral-timon" viewBox="0 0 100 100" aria-hidden="true">${timonSVG(50, 50, 30, '#fff')}</svg>
     </aside>
     <div class="principal">
@@ -283,12 +371,11 @@ function renderShell() {
   if (mas) mas.onclick = () => { const c = modal(`<h3>Menú</h3><div class="nav" style="color:var(--tinta)">${items.filter(i => i[0] !== 'sep').map(i => `<button data-ir="${i[0]}"><span class="ico">${ic(i[1], 19)}</span>${i[2]}</button>`).join('')}</div>`); $$('[data-ir]', c).forEach(b => b.onclick = () => { cerrarModal(); ir(b.dataset.ir); }); };
   $('#bSalir').onclick = () => salir();
   $('#bTema').onclick = () => { const act = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = act; local.pset('tema', act); };
-  actualizarBadge();
 }
+function ponerBadge(n) { $$('[data-badge]').forEach(b => { b.textContent = n; b.classList.toggle('oculto', !n); }); }
 async function actualizarBadge() {
   try {
-    const hs = await api('hilos'); const n = hs.reduce((a, x) => a + (x.noLeidos || 0), 0);
-    $$('[data-badge]').forEach(b => { b.textContent = n; b.classList.toggle('oculto', !n); });
+    const hs = await api('hilos'); ponerBadge(hs.reduce((a, x) => a + (x.noLeidos || 0), 0));
   } catch (e) {}
 }
 
@@ -305,24 +392,27 @@ async function ir(v, params) {
   try { await VISTAS[v](c, E.params); }
   catch (e) { c.innerHTML = vacio('⚠️', h(e.message)); }
 }
-const esPersonal = () => ['admin', 'docente', 'asistente'].includes(E.perfil.rol);
+const esPersonal = () => ['admin', 'docente', 'asistente', 'personalizado'].includes(E.perfil.rol);
+const esAdminC = () => !!(E.perfil && E.perfil.todosLosCursos);
 
 /* =====================================================================
  * INICIO
  * ===================================================================== */
 VISTAS.inicio = async (c) => {
   const d = await api('inicio');
+  ponerBadge(d.noLeidos || 0);
+  E.perfil = Object.assign(E.perfil, d.perfil || {});
   const p = E.perfil, nombre = p.nombre.split(' ')[0];
   const saludo = (() => { const hr = new Date().getHours(); return hr < 12 ? 'Buenos días' : hr < 20 ? 'Buenas tardes' : 'Buenas noches'; })();
   const hero = (txt, extra, foto) => `<section class="hola ${foto ? 'con-foto' : ''}">${foto ? `<div class="hola-foto" style="background-image:url('${h(foto)}')"></div>` : ''}${timonFondo}
       <span class="burbuja-deco b1"></span><span class="burbuja-deco b2"></span>
-      <div class="hola-txt"><span class="chip oro">${h(ROL_TXT[p.rol])}${p.cursos.length ? ' · ' + h(p.cursos.join(', ')) : ''}</span>
+      <div class="hola-txt"><span class="chip oro">${h(rolTexto(p))}${p.cursos.length ? ' · ' + h(p.cursos.join(', ')) : ''}</span>
       <p class="saludo">${saludo},</p><h1>${h(nombre)} <span class="ola-mano" aria-hidden="true">👋</span></h1><p>${txt}</p>${extra || ''}</div>
       ${E.info.imagenes && E.info.imagenes.portada && !foto ? `<img class="ilus" src="${h(E.info.imagenes.portada)}" alt="">` : ''}</section>`;
   if (!esPersonal()) {
-    const sesiones = await api('sesiones');
+    const sesiones = d.listaSesiones || [];
     const vistas = local.pget('sesVistas', []);
-    const cs = await api('cuestionarios');
+    const cs = d.listaCuestionarios || [];
     const pend = cs.filter(x => !x.respondido);
     const est = p.rol === 'estudiante';
     const hechos = sesiones.filter(s => vistas.includes(s.id)).length + cs.filter(x => x.respondido).length;
@@ -338,8 +428,8 @@ VISTAS.inicio = async (c) => {
       <div class="frase mt">${ic('ampolleta', 26)}<div><b>${h(frase[0])}</b><span>${h(frase[1])}</span></div></div>
       <div class="fila entre mt2"><h3 style="margin:0">${est ? 'Tu ruta de navegación' : 'Ruta para familias'}</h3><button class="btn fantasma mini" onclick="ir('sesiones')">Ver todas ${ic('flecha', 16)}</button></div>
       <div class="ruta">${sesiones.map((s, i) => `<button class="parada ${vistas.includes(s.id) ? 'hecha' : ''} ${s === sigSesion ? 'actual' : ''}" data-s="${s.id}">
-        <div class="parada-img">${escena(s.imagen)}${vistas.includes(s.id) ? `<span class="parada-ok">${ic('check', 16)}</span>` : ''}</div>
-        <span class="parada-num">${s.numero ? 'Sesión ' + s.numero : 'Guía'}</span><b>${h(s.titulo)}</b></button>`).join('') || vacio(ic('brujula', 28), 'Pronto habrá sesiones disponibles.')}</div>
+        <div class="parada-img">${portadaSesion(s)}${vistas.includes(s.id) ? `<span class="parada-ok">${ic('check', 16)}</span>` : ''}</div>
+        <span class="parada-num">${s.numero ? 'Sesión ' + s.numero : s.audiencia === 'estudiantes' ? 'Bienvenida' : 'Guía'}</span><b>${h(s.titulo)}</b></button>`).join('') || vacio(ic('brujula', 28), 'Pronto habrá sesiones disponibles.')}</div>
       <div class="grid g3 kpis mt2">
         <div class="tarjeta kpi color c1"><span class="kpi-ico">${ic('brujula', 22)}</span><b>${d.sesiones}</b><span>sesiones para explorar</span></div>
         <div class="tarjeta kpi color c2"><span class="kpi-ico">${ic('tarea', 22)}</span><b>${pend.length}</b><span>${est ? 'cuestionarios' : 'encuestas'} pendientes</span></div>
@@ -353,7 +443,7 @@ VISTAS.inicio = async (c) => {
       </div>`;
     $$('[data-s]', c).forEach(b => b.onclick = () => ir('sesion', { id: b.dataset.s }));
     $$('[data-q]', c).forEach(b => b.onclick = () => ir('responder', { id: b.dataset.q }));
-    activarLikes(c);
+    activarLikes(c); cargarImagenes(c);
     return;
   }
   const temas = ['brujula', 'estrella', 'lupa', 'balanza', 'bandera', 'camino'];
@@ -366,13 +456,15 @@ VISTAS.inicio = async (c) => {
       <div class="tarjeta kpi color c4"><span class="kpi-ico">${ic('brujula', 22)}</span><b>${d.sesiones}</b><span>sesiones</span></div>
       <div class="tarjeta kpi color c3"><span class="kpi-ico">${ic('chat', 22)}</span><b>${d.noLeidos}</b><span>consultas sin leer</span></div>
     </div>
+    ${enlacePublico() ? `<div class="frase mt">${ic('enlace', 26)}<div style="flex:1;min-width:0"><b>Enlace para estudiantes y familias</b><span style="word-break:break-all">${h(enlacePublico())}</span></div><button class="btn mini oro" id="bCopiarUrl">Copiar enlace</button></div>` : ''}
     <h3 class="mt2">${ic('grupo', 20)} Mis cursos</h3>
     <div class="grid g3">${d.cursos.map((x, i) => `<div class="tarjeta curso-card"><div class="curso-portada">${escena(temas[i % temas.length])}<span class="curso-nombre">${h(x.curso)}</span></div>
       <div class="fila entre"><span class="chip">${ic('mochila', 14)} ${x.estudiantes} estudiantes</span></div>
       <div class="fila mt"><button class="btn mini" data-curso="${h(x.curso)}" data-a="cursos">${ic('grupo', 15)} Estudiantes</button><button class="btn mini sec" data-curso="${h(x.curso)}" data-a="reportes">${ic('tendencia', 15)} Reporte</button><button class="btn mini oro" data-curso="${h(x.curso)}" data-a="analisis">${ic('chispa', 15)} Análisis</button></div></div>`).join('') ||
-      vacio(ic('grupo', 28), E.perfil.rol === 'admin' ? 'Aún no hay estudiantes. Use <b>Carga masiva</b> para importarlos.' : 'No tiene cursos asignados. Contacte al administrador.')}</div>
+      vacio(ic('grupo', 28), esAdminC() ? 'Aún no hay estudiantes. Use <b>Carga masiva</b> para importarlos.' : 'No tiene cursos asignados. Contacte al administrador.')}</div>
     <h3 class="mt2">${ic('megafono', 20)} Avisos recientes</h3><div>${muro(d.avisos)}</div>`;
   $$('[data-curso]', c).forEach(b => b.onclick = () => { E.cursoSel = b.dataset.curso; ir(b.dataset.a); });
+  if ($('#bCopiarUrl')) $('#bCopiarUrl').onclick = () => copiarTexto(enlacePublico());
   activarLikes(c);
 };
 
@@ -399,9 +491,9 @@ VISTAS.sesiones = async (c) => {
   const visibles = lista.filter(s => !filtro || s.audiencia === filtro);
   c.innerHTML = `
     <div class="fila entre"><p class="muted" style="margin:0">${pers ? 'Sesiones del proceso. Puede editarlas para sus cursos e incluir elementos emergentes.' : 'Explora cada sesión a tu ritmo.'}</p>
-      ${pers ? `<div class="fila"><div class="tabs" style="margin:0">${[['', 'Todas'], ['estudiantes', 'Estudiantes'], ['familias', 'Familias'], ['docentes', 'Docentes']].map(t => `<button class="tab ${filtro === t[0] ? 'activo' : ''}" data-aud="${t[0]}">${t[1]}</button>`).join('')}</div><button class="btn oro" id="bNueva">＋ Nueva sesión</button></div>` : ''}</div>
+      ${pers ? `<div class="fila"><div class="tabs" style="margin:0">${[['', 'Todas'], ['estudiantes', 'Alumnos/as'], ['familias', 'Familias'], ['docentes', 'Docentes']].map(t => `<button class="tab ${filtro === t[0] ? 'activo' : ''}" data-aud="${t[0]}">${t[1]}</button>`).join('')}</div>${puede('sesiones.editar') ? '<button class="btn oro" id="bNueva">＋ Nueva sesión</button>' : ''}</div>` : ''}</div>
     <div class="grid g3 mt">${visibles.map(s => `<button class="sesion-card" data-s="${s.id}">
-      <div class="portada">${escena(s.imagen)}<span class="num">${s.numero ? 'Sesión ' + s.numero : 'Guía'}</span>${!pers && local.pget('sesVistas', []).includes(s.id) ? `<span class="visto-chip">${ic('check', 14)} Vista</span>` : ''}</div>
+      <div class="portada">${portadaSesion(s)}<span class="num">${s.numero ? 'Sesión ' + s.numero : s.audiencia === 'estudiantes' ? 'Bienvenida' : 'Guía'}</span>${!pers && local.pget('sesVistas', []).includes(s.id) ? `<span class="visto-chip">${ic('check', 14)} Vista</span>` : ''}</div>
       <div class="cuerpo"><h3>${h(s.titulo)}</h3><p class="muted peq" style="margin:0 0 8px">${h(s.objetivo)}</p>
       <div class="fila">${pers ? `<span class="chip ${s.audiencia === 'familias' ? 'violeta' : s.audiencia === 'docentes' ? 'oro' : ''}">${h(s.audiencia)}</span>${s.estado !== 'publicada' ? '<span class="chip alerta">borrador</span>' : ''}${s.baseId ? '<span class="chip ok">versión de mis cursos</span>' : ''}${s.cursos ? `<span class="chip">${h(s.cursos)}</span>` : ''}` : ''}
       ${s.emergentes ? `<span class="chip oro">💡 ${s.emergentes}</span>` : ''}</div></div></button>`).join('') || vacio('🧭', 'No hay sesiones disponibles todavía.')}</div>
@@ -409,7 +501,7 @@ VISTAS.sesiones = async (c) => {
   $$('[data-s]', c).forEach(b => b.onclick = () => ir('sesion', { id: b.dataset.s }));
   $$('[data-aud]', c).forEach(b => b.onclick = () => ir('sesiones', { aud: b.dataset.aud }));
   if ($('#bNueva')) $('#bNueva').onclick = () => editorSesion(null);
-  activarMateriales(c);
+  activarMateriales(c); cargarImagenes(c);
 };
 
 function listaMateriales(mats) {
@@ -418,7 +510,7 @@ function listaMateriales(mats) {
   return `<div class="grid g2">${mats.map(m => `<div class="tarjeta plana fila" style="align-items:flex-start"><span style="font-size:1.8rem">${ico(m)}</span>
     <div style="flex:1;min-width:0"><b>${h(m.titulo)}</b><div class="muted peq">${h(m.descripcion)}</div><div class="muted peq">${h(m.autorNombre)} · ${fecha(m.fecha)}${esPersonal() ? ' · ' + h(m.audiencia) + (m.cursos ? ' · ' + h(m.cursos) : '') : ''}</div></div>
     <div class="fila">${m.tieneArchivo ? `<button class="btn mini sec" data-arch="${m.id}">Abrir</button>` : `<a class="btn mini sec" href="${h(m.url)}" target="_blank" rel="noopener">Abrir</a>`}
-    ${m.propio || E.perfil.rol === 'admin' ? `<button class="btn mini fantasma" data-delmat="${m.id}" title="Eliminar">🗑️</button>` : ''}</div></div>`).join('')}</div>`;
+    ${m.propio || esAdminC() ? `<button class="btn mini fantasma" data-delmat="${m.id}" title="Eliminar">🗑️</button>` : ''}</div></div>`).join('')}</div>`;
 }
 function activarMateriales(c) {
   $$('[data-arch]', c).forEach(b => b.onclick = async () => {
@@ -438,21 +530,101 @@ function activarMateriales(c) {
   });
 }
 
-function renderBloque(b) {
+/** Video desde YouTube, Google Drive (compartido con el enlace) o un archivo .mp4. */
+function videoHTML(url, titulo) {
+  const u = String(url || '');
+  const yt = u.match(/(?:youtu\.be\/|v=|embed\/|shorts\/)([\w-]{11})/);
+  if (yt) return `<div class="video-marco"><iframe src="https://www.youtube-nocookie.com/embed/${yt[1]}" title="${h(titulo)}" allowfullscreen loading="lazy"></iframe></div>`;
+  const dr = u.match(/drive\.google\.com\/file\/d\/([\w-]+)/);
+  if (dr) return `<div class="video-marco"><iframe src="https://drive.google.com/file/d/${dr[1]}/preview" title="${h(titulo)}" allow="autoplay" loading="lazy"></iframe></div>`;
+  if (/\.(mp4|webm)(\?|$)/i.test(u)) return `<video class="video-archivo" src="${h(u)}" controls preload="none"></video>`;
+  return u ? `<a class="btn mini sec" href="${h(u)}" target="_blank" rel="noopener">Ver video ↗</a>` : '';
+}
+/** Imagen y/o video que acompañan cualquier paso de la guía. */
+function mediaBloque(b) {
+  let out = '';
+  if (b.img) out += `<figure class="bloque-img">${imgRef(b.img, b.pie || b.titulo)}${b.pie ? `<figcaption>${h(b.pie)}</figcaption>` : ''}</figure>`;
+  if (b.video) out += videoHTML(b.video, b.titulo);
+  return out;
+}
+/**
+ * Un paso de la guía. ctx = { s, trabajos (por bloque), cuestionarios (por código), pers }.
+ * Los ejercicios se responden aquí mismo; las encuestas muestran "Responder" o "Ver mi resultado".
+ */
+function renderBloque(b, i, ctx) {
+  ctx = ctx || {};
+  const id = b.id || 'b' + i;
   const [, etq, icono] = BLOQUE[b.tipo] || BLOQUE.texto;
   const cab = `<div class="bloque-cab"><span class="bloque-ico">${ic(icono, 20)}</span><div><div class="etq">${etq}</div>${b.titulo ? `<h3>${h(b.titulo)}</h3>` : ''}</div></div>`;
-  if (b.tipo === 'enlace') return `<div class="bloque enlace fila entre">${cab}<a class="btn mini oro" href="${h(b.texto || b.url)}" target="_blank" rel="noopener">Abrir sitio ${ic('flecha', 15)}</a></div>`;
-  if (b.tipo === 'video') {
-    const m = String(b.texto || b.url).match(/(?:youtu\.be\/|v=|embed\/)([\w-]{11})/);
-    return `<div class="bloque video">${cab}${m ? `<div style="position:relative;padding-top:56.25%;border-radius:12px;overflow:hidden"><iframe src="https://www.youtube-nocookie.com/embed/${m[1]}" title="${h(b.titulo)}" style="position:absolute;inset:0;width:100%;height:100%;border:0" allowfullscreen></iframe></div>` : `<a href="${h(b.texto)}" target="_blank" rel="noopener">Ver video ↗</a>`}</div>`;
+  const txt = b.texto && !['enlace', 'video', 'imagen'].includes(b.tipo) ? `<div class="bloque-txt">${sanear(b.texto)}</div>` : '';
+  if (b.tipo === 'enlace') return `<div class="bloque enlace"><div class="fila entre">${cab}<a class="btn mini oro" href="${h(b.texto || b.url)}" target="_blank" rel="noopener">Abrir sitio ${ic('flecha', 15)}</a></div>${mediaBloque(b)}</div>`;
+  if (b.tipo === 'video') return `<div class="bloque video">${cab}${videoHTML(b.video || b.texto || b.url, b.titulo)}</div>`;
+  if (b.tipo === 'imagen') return `<div class="bloque imagen">${cab}<figure class="bloque-img">${imgRef(b.img || b.texto || b.url, b.titulo)}${b.pie ? `<figcaption>${h(b.pie)}</figcaption>` : ''}</figure></div>`;
+  if (b.tipo === 'cuestionario') {
+    const q = (ctx.cuestionarios || {})[b.codigo];
+    let acc;
+    if (ctx.pers) acc = q ? `<span class="chip ${q.habilitado ? 'ok' : ''}">${q.habilitado ? 'Habilitado: ' + h(q.cursos || 'todos los cursos') : 'No habilitado'}</span><button class="btn mini sec" data-q="${q.id}">Vista previa</button><button class="btn mini sec" onclick="ir('cuestionarios')">Gestionar</button>` : `<span class="chip alerta">No existe un cuestionario con código ${h(b.codigo)}</span>`;
+    else if (!q) acc = `<span class="chip">${ic('reloj', 14)} Aún no está habilitada: su profesor/a le avisará</span>`;
+    else if (q.respondido) acc = `<span class="chip ok">${ic('check', 14)} Ya respondida</span><button class="btn mini oro" data-resq="${h(q.codigo)}">${ic('grafico', 15)} Ver mi resultado</button><button class="btn mini sec" data-q="${q.id}">Revisar respuestas</button>`;
+    else acc = `<button class="btn oro" data-q="${q.id}">${ic('tarea', 16)} Responder ahora</button>`;
+    return `<div class="bloque cuestionario">${cab}${txt}${mediaBloque(b)}<div class="fila mt">${acc}</div></div>`;
   }
-  if (b.tipo === 'imagen') return `<div class="bloque imagen">${cab}<img src="${h(b.texto || b.url)}" alt="${h(b.titulo)}" style="border-radius:12px"></div>`;
-  return `<div class="bloque ${h(b.tipo)}">${cab}<div class="bloque-txt">${sanear(b.texto)}</div></div>`;
+  if (b.tipo === 'ejercicio') {
+    const campos = b.campos || [];
+    let zona;
+    if (ctx.pers) {
+      zona = `<div class="ej-vista">${campos.map(x => `<div class="ej-campo-vista">${h(x)}</div>`).join('') || '<div class="ej-campo-vista">Respuesta libre</div>'}
+        <p class="muted peq">${ic('lapiz', 14)} Los alumnos y familias responden aquí${b.foto ? ' (pueden subir foto)' : ''}. Vea sus respuestas en <b>Reporte de la sesión</b>.</p></div>`;
+    } else if (ctx.puedeEj) {
+      const t = (ctx.trabajos || {})[id] || { campos: {} };
+      zona = `<form class="ejercicio-form" data-ej="${h(id)}">
+        ${campos.length ? campos.map((x, j) => `<label class="campo"><span>${h(x)}</span><textarea class="input" name="c${j}" rows="2" maxlength="3000">${h(t.campos['c' + j] || '')}</textarea></label>`).join('')
+          : `<label class="campo"><span>Mi respuesta</span><textarea class="input" name="texto" maxlength="8000">${h(t.texto || '')}</textarea></label>`}
+        <div class="fila"><label class="btn mini sec">${ic('imagen', 15)} ${t.tieneImagen ? 'Cambiar foto' : b.foto ? 'Subir foto de mi dibujo' : 'Agregar foto (opcional)'}<input type="file" accept="image/*" name="foto" hidden></label>
+          ${t.tieneImagen ? `<button type="button" class="btn mini fantasma" data-verfoto="${h(t.id)}">Ver mi foto</button>` : ''}<span class="foto-nombre muted peq"></span>
+          <span style="flex:1"></span><span class="muted peq estado-ej">${t.fecha ? ic('check', 14) + ' Guardado ' + fecha(t.fecha) : ''}</span><button class="btn mini oro">${ic('check', 15)} Guardar</button></div></form>`;
+    } else zona = '';
+    return `<div class="bloque ejercicio">${cab}${txt}${mediaBloque(b)}${zona}</div>`;
+  }
+  return `<div class="bloque ${h(b.tipo)}">${cab}${txt}${mediaBloque(b)}</div>`;
 }
-/** Permite solo etiquetas de formato básicas en los textos de sesiones. */
+function activarEjercicios(c, s) {
+  $$('.ejercicio-form', c).forEach(f => {
+    const archivo = $('input[name=foto]', f);
+    archivo.onchange = () => { $('.foto-nombre', f).textContent = archivo.files[0] ? archivo.files[0].name : ''; };
+    f.onsubmit = async e => {
+      e.preventDefault();
+      const b = $('button.oro', f); b.disabled = true;
+      try {
+        const campos = {};
+        $$('textarea[name^=c]', f).forEach(t => { campos[t.name] = t.value; });
+        const d = { sesionId: s.id, bloqueId: f.dataset.ej, campos, texto: ($('textarea[name=texto]', f) || {}).value || '' };
+        if (archivo.files[0]) { $('.estado-ej', f).textContent = 'Preparando foto…'; d.imagen = await comprimirImagen(archivo.files[0], 1600, .82); }
+        const t = await api('guardarTrabajo', d);
+        $('.estado-ej', f).innerHTML = ic('check', 14) + ' Guardado ' + fecha(t.fecha);
+        archivo.value = ''; $('.foto-nombre', f).textContent = '';
+        toast('¡Ejercicio guardado!');
+      } catch (err) { toast(err.message, true); $('.estado-ej', f).textContent = ''; }
+      b.disabled = false;
+    };
+  });
+  $$('[data-verfoto]', c).forEach(b => b.onclick = async () => {
+    try { const r = await api('imagenTrabajo', { id: b.dataset.verfoto }); modal(`<h3>Mi foto</h3><img src="${r.uri}" alt="Foto del ejercicio" style="border-radius:14px;width:100%">`); } catch (e) { toast(e.message, true); }
+  });
+  $$('[data-resq]', c).forEach(b => b.onclick = async () => {
+    try {
+      const d = await api('misResultados');
+      const r = d.propios.find(x => x.codigo === b.dataset.resq);
+      if (!r) return toast('Aún no hay resultado.', true);
+      modal(`<div class="resultado"><h2>${r.resultado.titulo}</h2>${r.resultado.mensajes.map(m => `<p>${sanear(m)}</p>`).join('')}</div>
+        <h3 class="mt">Mis respuestas</h3>${r.detalle.map(x => `<div class="pregunta" style="padding:10px 0"><div class="enun" style="margin-bottom:4px"><span class="n">${x.n}</span>${h(x.texto)}</div><div class="peq">${h(valorDetalle(x))}</div></div>`).join('')}`, true);
+    } catch (e) { toast(e.message, true); }
+  });
+}
+/** Permite solo etiquetas de formato básicas (y tablas) en los textos de sesiones. */
 function sanear(html) {
   const t = document.createElement('template'); t.innerHTML = String(html || '');
-  const permit = ['B', 'I', 'EM', 'STRONG', 'BR', 'P', 'UL', 'OL', 'LI', 'U', 'SMALL', 'A'];
+  const permit = ['B', 'I', 'EM', 'STRONG', 'BR', 'P', 'UL', 'OL', 'LI', 'U', 'SMALL', 'A', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD', 'H4', 'BLOCKQUOTE'];
   const limpiar = n => Array.from(n.childNodes).forEach(x => {
     if (x.nodeType === 1) {
       if (!permit.includes(x.tagName)) { x.replaceWith(document.createTextNode(x.textContent)); return; }
@@ -472,38 +644,49 @@ VISTAS.sesion = async (c, p) => {
   const vistas = local.pget('sesVistas', []); if (!vistas.includes(s.id)) { vistas.push(s.id); local.pset('sesVistas', vistas); }
   const pers = esPersonal();
   $('#tituloVista').textContent = s.numero ? 'Sesión ' + s.numero : 'Sesión';
+  const ctx = { s, pers, puedeEj: puede('ejercicios'), trabajos: {}, cuestionarios: {} };
+  (s.misTrabajos || []).forEach(t => { ctx.trabajos[t.bloqueId] = t; });
+  s.cuestionarios.forEach(q => { ctx.cuestionarios[q.codigo] = q; });
+  const incrustados = s.bloques.filter(b => b.tipo === 'cuestionario').map(b => b.codigo);
+  const sueltos = s.cuestionarios.filter(q => !incrustados.includes(q.codigo));
+  const nEj = s.bloques.filter(b => b.tipo === 'ejercicio').length;
+  const hechos = s.bloques.filter((b, i) => b.tipo === 'ejercicio' && ctx.trabajos[b.id || 'b' + i]).length;
   c.innerHTML = `
     <button class="btn fantasma mini no-print" onclick="ir('sesiones')">← Volver</button>
-    <section class="sesion-head mt">${escena(s.imagen, 'fondo')}<div class="sesion-head-txt"><span class="chip oro">${ic('brujula', 14)} ${s.numero ? 'Sesión ' + s.numero : 'Guía'} ${s.audiencia !== 'estudiantes' ? '· ' + h(s.audiencia) : ''}</span>
+    <section class="sesion-head mt">${portadaSesion(s, 'fondo')}<div class="sesion-head-txt"><span class="chip oro">${ic('brujula', 14)} ${s.numero ? 'Sesión ' + s.numero : s.audiencia === 'estudiantes' ? 'Bienvenida' : 'Guía'} ${s.audiencia !== 'estudiantes' ? '· ' + h(s.audiencia) : ''}</span>
       <h1>${h(s.titulo)}</h1><p class="objetivo">${ic('diana', 18)} <span><b>Objetivo:</b> ${h(s.objetivo)}</span></p>
-      <div class="fila peq" style="opacity:.9">${ic('reloj', 15)} 75 minutos · ${s.bloques.length} momentos${s.cuestionarios.length ? ' · ' + s.cuestionarios.length + ' cuestionario(s)' : ''}</div></div></section>
-    <div class="fila mt no-print">${s.emergentes.filter(e => e.disparador !== 'abrir' || true).map((e, i) => `<button class="pop-btn" data-pop="${i}">${h(e.icono)} ${h(e.titulo)}</button>`).join('')}
-      ${pers ? `<span style="flex:1"></span><button class="btn mini sec" id="bEditar">✏️ Editar${E.perfil.rol !== 'admin' && !s.baseId ? ' para mis cursos' : ''}</button><button class="btn mini sec" id="bRepSes">📈 Reporte de la sesión</button><button class="btn mini sec" id="bMat">📎 Agregar material</button>` : ''}
+      <div class="fila peq" style="opacity:.9">${ic('reloj', 15)} ${s.bloques.length} momentos${nEj ? ' · ' + nEj + ' ejercicio(s)' : ''}${s.cuestionarios.length ? ' · ' + s.cuestionarios.length + ' encuesta(s)' : ''}</div>
+      ${!pers && nEj ? `<div class="progreso mt" style="max-width:320px;background:rgba(255,255,255,.2)"><div style="width:${Math.round(100 * hechos / nEj)}%"></div></div><div class="peq" style="opacity:.9">${hechos} de ${nEj} ejercicios desarrollados</div>` : ''}</div></section>
+    <div class="fila mt no-print">${s.emergentes.map((e, i) => `<button class="pop-btn" data-pop="${i}">${h(e.icono)} ${h(e.titulo)}</button>`).join('')}
+      ${pers ? `<span style="flex:1"></span>${puede('sesiones.editar') ? `<button class="btn mini sec" id="bEditar">✏️ Editar${!esAdminC() && !s.baseId ? ' para mis cursos' : ''}</button>` : ''}${puede('reportes') ? '<button class="btn mini sec" id="bRepSes">📈 Reporte de la sesión</button>' : ''}${puede('materiales') ? '<button class="btn mini sec" id="bMat">📎 Agregar material</button>' : ''}` : ''}
       ${s.autorNombre ? `<span class="muted peq">Actualizada por ${h(s.autorNombre)} · ${fecha(s.actualizado)}</span>` : ''}</div>
-    ${s.bloques.map(renderBloque).join('')}
-    ${s.cuestionarios.length ? `<h3 class="mt2">${E.perfil.rol === 'apoderado' ? 'Encuestas' : 'Cuestionarios'} de esta sesión</h3><div class="grid g2">${s.cuestionarios.map(q => `<div class="tarjeta plana fila entre"><div><span class="chip">${h(q.codigo)}</span> <b>${h(q.titulo)}</b>${pers ? `<div class="muted peq">${q.habilitado ? 'Habilitado: ' + h(q.cursos || 'todos los cursos') : 'No habilitado'}</div>` : ''}</div>
-      ${pers ? `<button class="btn mini sec" onclick="ir('cuestionarios')">Gestionar</button>` : q.respondido ? `<button class="btn mini sec" data-q="${q.id}">Ver / editar</button>` : `<button class="btn mini oro" data-q="${q.id}">Responder</button>`}</div>`).join('')}</div>` : ''}
+    ${s.bloques.map((b, i) => renderBloque(b, i, ctx)).join('')}
+    ${sueltos.length ? `<h3 class="mt2">${E.perfil.rol === 'apoderado' ? 'Encuestas' : 'Cuestionarios'} de esta sesión</h3>${sueltos.map((q, i) => renderBloque({ tipo: 'cuestionario', codigo: q.codigo, titulo: q.titulo, texto: q.descripcion }, 900 + i, ctx)).join('')}` : ''}
     <h3 class="mt2">Material de la sesión</h3><div id="matSes">${listaMateriales(s.materiales)}</div>`;
   $$('[data-pop]', c).forEach(b => b.onclick = () => mostrarEmergente(s.emergentes[b.dataset.pop]));
-  $$('[data-q]', c).forEach(b => b.onclick = () => ir('responder', { id: b.dataset.q }));
-  activarMateriales(c);
+  $$('[data-q]', c).forEach(b => b.onclick = () => ir('responder', { id: b.dataset.q, volver: s.id }));
+  activarMateriales(c); activarEjercicios(c, s); cargarImagenes(c);
   const alAbrir = s.emergentes.find(e => e.disparador === 'abrir');
   if (alAbrir && !pers) setTimeout(() => mostrarEmergente(alAbrir), 350);
   if (pers) {
-    $('#bEditar').onclick = () => editorSesion(s);
-    $('#bRepSes').onclick = async () => { const cursos = await misCursos(); E.cursoSel = E.cursoSel || (cursos[0] && cursos[0].curso); ir('reportes', { tab: 'sesion', sesionId: s.id }); };
-    $('#bMat').onclick = () => formMaterial(s.baseId || s.id);
+    if ($('#bEditar')) $('#bEditar').onclick = () => editorSesion(s);
+    if ($('#bRepSes')) $('#bRepSes').onclick = async () => { const cursos = await misCursos(); E.cursoSel = E.cursoSel || (cursos[0] && cursos[0].curso); ir('reportes', { tab: 'sesion', sesionId: s.id }); };
+    if ($('#bMat')) $('#bMat').onclick = () => formMaterial(s.baseId || s.id);
   }
 };
 
 function editorSesion(s) {
-  const admin = E.perfil.rol === 'admin';
+  const admin = esAdminC();
   s = s || { titulo: '', objetivo: '', audiencia: 'estudiantes', cursos: admin ? '' : E.perfil.cursos.join(', '), estado: 'borrador', numero: 0, imagen: 'brujula', bloques: [], emergentes: [] };
   let bloques = JSON.parse(JSON.stringify(s.bloques)), pops = JSON.parse(JSON.stringify(s.emergentes));
+  let portada = s.imagen || 'brujula';
   const c = modal(`<h2>${s.id ? 'Editar sesión' : 'Nueva sesión'}</h2>
     ${s.id && !admin && !s.baseId ? '<p class="chip ok">Los cambios se guardarán como versión para sus cursos; los demás cursos no se ven afectados.</p>' : ''}
-    <div class="grid g2 mt"><label class="campo"><span>Título</span><input class="input" id="sTit" value="${h(s.titulo)}"></label>
-    <label class="campo"><span>Ícono</span><select class="input" id="sImg">${Object.keys(EMOJI).map(k => `<option value="${k}" ${s.imagen === k ? 'selected' : ''}>${EMOJI[k]} ${k}</option>`).join('')}</select></label></div>
+    <label class="campo mt"><span>Título</span><input class="input" id="sTit" value="${h(s.titulo)}"></label>
+    <div class="campo"><span>Portada de la sesión</span><div class="portada-editor"><div class="portada-prev" id="sPrev"></div>
+      <div><select class="input" id="sImg"><option value="">— Imagen propia —</option>${Object.keys(EMOJI).map(k => `<option value="${k}" ${portada === k ? 'selected' : ''}>Ilustración: ${k}</option>`).join('')}</select>
+      <div class="fila mt"><label class="btn mini sec">${ic('subir', 15)} Subir imagen<input type="file" accept="image/*" id="sFile" hidden></label><input class="input" id="sUrl" placeholder="o pegue una URL https de imagen" style="flex:1;min-width:180px"></div>
+      <small class="muted">La imagen se reduce automáticamente para que cargue rápido.</small></div></div></div>
     <label class="campo"><span>Objetivo</span><textarea class="input" id="sObj" style="min-height:60px">${h(s.objetivo)}</textarea></label>
     ${admin || !s.id ? `<div class="grid g4">
       <label class="campo"><span>N.°</span><input class="input" id="sNum" type="number" min="0" value="${s.numero || 0}"></label>
@@ -514,11 +697,42 @@ function editorSesion(s) {
     <button class="btn mini sec" id="bAddBloque">＋ Agregar bloque</button>
     <h3 class="mt2">Elementos emergentes 💡</h3><p class="muted peq">Ventanas con consejos, preguntas o recordatorios. "Al abrir" aparece apenas el estudiante entra; "Botón" aparece como botón dorado.</p>
     <div id="ePops"></div><button class="btn mini sec" id="bAddPop">＋ Agregar emergente</button>
-    <div class="fila mt2"><button class="btn oro" id="bGuardarSes">Guardar</button>${s.id && admin ? '<button class="btn peligro" id="bEliminarSes">Eliminar</button>' : ''}<button class="btn fantasma" data-cerrar>Cancelar</button></div>`, true);
+    <div class="fila mt2"><button class="btn oro" id="bGuardarSes">Guardar</button>${s.id && puede('sesiones.eliminar') ? '<button class="btn peligro" id="bEliminarSes">Eliminar</button>' : ''}<button class="btn fantasma" data-cerrar>Cancelar</button></div>`, true);
+  const pintarPortada = () => { $('#sPrev', c).innerHTML = portadaSesion({ imagen: portada, titulo: 'Portada' }); cargarImagenes($('#sPrev', c)); };
+  pintarPortada();
+  $('#sImg', c).onchange = e => { if (e.target.value) { portada = e.target.value; pintarPortada(); } };
+  $('#sUrl', c).onchange = e => { if (/^https:\/\//.test(e.target.value)) { portada = e.target.value.trim(); $('#sImg', c).value = ''; pintarPortada(); } };
+  $('#sFile', c).onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { toast('Subiendo imagen…'); const r = await api('subirImagenContenido', await comprimirImagen(f, 1400, .8)); portada = r.ref; $('#sImg', c).value = ''; pintarPortada(); toast('Imagen lista'); } catch (err) { toast(err.message, true); }
+  };
+  const cuestionarios = []; api('cuestionarios').then(l => { cuestionarios.push(...l); pintar(); }).catch(() => {});
   const pintar = () => {
-    $('#eBloques', c).innerHTML = bloques.map((b, i) => `<div class="editor-bloque"><div class="fila"><select class="input" style="width:auto" data-bt="${i}">${Object.keys(BLOQUE).map(k => `<option value="${k}" ${b.tipo === k ? 'selected' : ''}>${BLOQUE[k][0]} ${BLOQUE[k][1]}</option>`).join('')}</select>
+    $('#eBloques', c).innerHTML = bloques.map((b, i) => `<div class="editor-bloque"><div class="fila"><span class="ed-num">${i + 1}</span><select class="input" style="width:auto" data-bt="${i}">${Object.keys(BLOQUE).map(k => `<option value="${k}" ${b.tipo === k ? 'selected' : ''}>${BLOQUE[k][0]} ${BLOQUE[k][1]}</option>`).join('')}</select>
       <input class="input" style="flex:1" data-bti="${i}" placeholder="Título" value="${h(b.titulo)}"><button class="btn mini fantasma" data-up="${i}" title="Subir">↑</button><button class="btn mini fantasma" data-del="${i}" title="Quitar">✕</button></div>
-      <textarea class="input mt" data-btx="${i}" placeholder="${['enlace', 'video', 'imagen'].includes(b.tipo) ? 'URL https://…' : 'Texto (admite <b>, <i>, <br>)'}">${h(b.texto)}</textarea></div>`).join('') || '<p class="muted">Sin bloques.</p>';
+      ${b.tipo === 'cuestionario' ? `<label class="campo mt"><span>Encuesta que aparece en este paso</span><select class="input" data-bcod="${i}"><option value="">Elija…</option>${cuestionarios.map(q => `<option value="${h(q.codigo)}" ${b.codigo === q.codigo ? 'selected' : ''}>${h(q.codigo)} · ${h(q.titulo)}</option>`).join('')}</select></label>` : ''}
+      <textarea class="input mt" data-btx="${i}" placeholder="${['enlace', 'video', 'imagen'].includes(b.tipo) ? 'URL https://…' : 'Texto (admite <b>, <i>, <br>, listas y tablas)'}">${h(b.texto)}</textarea>
+      ${b.tipo === 'ejercicio' ? `<label class="campo mt"><span>Campos para responder (uno por línea; vacío = respuesta libre)</span><textarea class="input" data-bcam="${i}" style="min-height:70px">${h((b.campos || []).join('\n'))}</textarea></label>
+        <label class="fila peq"><input type="checkbox" data-bfoto="${i}" ${b.foto ? 'checked' : ''}> Pedir foto (por ejemplo, de un dibujo)</label>` : ''}
+      <details class="mt" ${b.img || b.video ? 'open' : ''}><summary class="peq" style="cursor:pointer">${ic('imagen', 14)} Imagen y video de este paso</summary>
+        <div class="fila mt">${b.img ? `<div class="ed-mini">${imgRef(b.img, '')}</div><button class="btn mini fantasma" data-bimgx="${i}">Quitar imagen</button>` : ''}
+          <label class="btn mini sec">${ic('subir', 14)} Subir imagen<input type="file" accept="image/*" data-bimg="${i}" hidden></label>
+          <input class="input" data-bimgu="${i}" placeholder="o URL https de imagen" style="flex:1;min-width:160px" value="${/^https/.test(b.img || '') ? h(b.img) : ''}"></div>
+        <input class="input mt" data-bpie="${i}" placeholder="Pie de imagen (opcional)" value="${h(b.pie || '')}">
+        <input class="input mt" data-bvid="${i}" placeholder="Video: enlace de YouTube o de Google Drive (compartido con el enlace)" value="${h(b.video || '')}">
+      </details></div>`).join('') || '<p class="muted">Sin bloques.</p>';
+    cargarImagenes($('#eBloques', c));
+    $$('[data-bcod]', c).forEach(x => x.onchange = () => bloques[x.dataset.bcod].codigo = x.value);
+    $$('[data-bcam]', c).forEach(x => x.oninput = () => bloques[x.dataset.bcam].campos = x.value.split('\n').map(t => t.trim()).filter(Boolean));
+    $$('[data-bfoto]', c).forEach(x => x.onchange = () => bloques[x.dataset.bfoto].foto = x.checked);
+    $$('[data-bpie]', c).forEach(x => x.oninput = () => bloques[x.dataset.bpie].pie = x.value);
+    $$('[data-bvid]', c).forEach(x => x.oninput = () => bloques[x.dataset.bvid].video = x.value.trim());
+    $$('[data-bimgu]', c).forEach(x => x.onchange = () => { if (!x.value || /^https:\/\//.test(x.value)) { bloques[x.dataset.bimgu].img = x.value.trim(); pintar(); } });
+    $$('[data-bimgx]', c).forEach(x => x.onclick = () => { bloques[x.dataset.bimgx].img = ''; pintar(); });
+    $$('[data-bimg]', c).forEach(x => x.onchange = async () => {
+      const f = x.files[0]; if (!f) return;
+      try { toast('Subiendo imagen…'); const r = await api('subirImagenContenido', await comprimirImagen(f, 1400, .8)); bloques[x.dataset.bimg].img = r.ref; pintar(); toast('Imagen agregada'); } catch (err) { toast(err.message, true); }
+    });
     $('#ePops', c).innerHTML = pops.map((p, i) => `<div class="editor-bloque"><div class="fila"><input class="input" style="width:64px" data-pi="${i}" value="${h(p.icono)}" aria-label="Ícono"><input class="input" style="flex:1" data-pt="${i}" placeholder="Título" value="${h(p.titulo)}">
       <select class="input" style="width:auto" data-pd="${i}"><option value="boton" ${p.disparador === 'boton' ? 'selected' : ''}>Botón</option><option value="abrir" ${p.disparador === 'abrir' ? 'selected' : ''}>Al abrir</option></select><button class="btn mini fantasma" data-pdel="${i}">✕</button></div>
       <textarea class="input mt" style="min-height:60px" data-px="${i}" placeholder="Mensaje">${h(p.texto)}</textarea></div>`).join('');
@@ -534,10 +748,11 @@ function editorSesion(s) {
     $$('[data-pdel]', c).forEach(x => x.onclick = () => { pops.splice(+x.dataset.pdel, 1); pintar(); });
   };
   pintar();
-  $('#bAddBloque', c).onclick = () => { bloques.push({ tipo: 'texto', titulo: '', texto: '' }); pintar(); };
+  $('#bAddBloque', c).onclick = () => { bloques.push({ id: 'b' + Date.now().toString(36), tipo: 'texto', titulo: '', texto: '' }); pintar(); };
   $('#bAddPop', c).onclick = () => { pops.push({ icono: '💡', titulo: '', texto: '', disparador: 'boton' }); pintar(); };
   $('#bGuardarSes', c).onclick = async (ev) => {
-    const d = { id: s.id, titulo: $('#sTit', c).value, objetivo: $('#sObj', c).value, imagen: $('#sImg', c).value, bloques, emergentes: pops };
+    bloques.forEach((b, i) => { b.id = b.id || 'b' + i; });
+    const d = { id: s.id, titulo: $('#sTit', c).value, objetivo: $('#sObj', c).value, imagen: portada, bloques, emergentes: pops };
     if ($('#sNum', c)) Object.assign(d, { numero: +$('#sNum', c).value, audiencia: $('#sAud', c).value, estado: $('#sEst', c).value, cursos: $('#sCur', c).value });
     ev.target.disabled = true;
     try { const r = await api('guardarSesion', d); cerrarModal(); toast('Sesión guardada'); ir('sesion', { id: r.id }); } catch (e) { toast(e.message, true); ev.target.disabled = false; }
@@ -566,7 +781,7 @@ async function formMaterial(sesionId) {
     <label class="campo"><span>Descripción</span><textarea class="input" id="mDesc" style="min-height:60px"></textarea></label>
     <div class="grid g2"><label class="campo"><span>Sesión</span><select class="input" id="mSes"><option value="">General (sin sesión)</option>${ses.map(s => `<option value="${s.baseId || s.id}" ${(s.baseId || s.id) === sesionId ? 'selected' : ''}>${s.numero ? 'S' + s.numero + ' · ' : ''}${h(s.titulo)} (${h(s.audiencia)})</option>`).join('')}</select></label>
     <label class="campo"><span>Para</span><select class="input" id="mAud"><option value="estudiantes">Estudiantes</option><option value="familias">Familias</option><option value="docentes">Equipo docente</option><option value="todos">Todos</option></select></label></div>
-    <label class="campo"><span>Cursos</span><select class="input" id="mCur" multiple size="${Math.min(5, cursos.length + 1)}">${E.perfil.rol === 'admin' ? '<option value="" selected>Todos los cursos</option>' : ''}${cursos.map(x => `<option ${E.perfil.rol !== 'admin' ? 'selected' : ''}>${h(x.curso)}</option>`).join('')}</select><small>Ctrl/Cmd + clic para elegir varios.</small></label>
+    <label class="campo"><span>Cursos</span><select class="input" id="mCur" multiple size="${Math.min(5, cursos.length + 1)}">${esAdminC() ? '<option value="" selected>Todos los cursos</option>' : ''}${cursos.map(x => `<option ${!esAdminC() ? 'selected' : ''}>${h(x.curso)}</option>`).join('')}</select><small>Ctrl/Cmd + clic para elegir varios.</small></label>
     <div class="tabs"><button class="tab activo" data-mt="archivo">📄 Subir archivo</button><button class="tab" data-mt="enlace">🔗 Enlace</button></div>
     <div id="mArchivo"><div class="drop" id="mDrop">Arrastre un archivo aquí o <label style="color:var(--mar);cursor:pointer;font-weight:700">elíjalo<input type="file" id="mFile" hidden></label><div class="muted peq">PDF, imágenes, documentos · máx. 15 MB · se guarda de forma privada</div><div id="mNombre" class="mt"></div></div></div>
     <div id="mEnlace" hidden><label class="campo"><span>URL (https)</span><input class="input" id="mUrl" placeholder="https://"></label></div>
@@ -607,17 +822,18 @@ VISTAS.cuestionarios = async (c) => {
     return;
   }
   const cursos = await misCursos();
-  const admin = E.perfil.rol === 'admin';
+  const admin = esAdminC();
   E.cursoSel = E.cursoSel || (cursos[0] && cursos[0].curso) || '';
   const hab = q => q.habilitado && (!q.cursos || q.cursos.split(/[,;]/).map(x => x.trim().toUpperCase().replace(/[\s°º.\-]/g, '')).includes(E.cursoSel.toUpperCase().replace(/[\s°º.\-]/g, '')));
   c.innerHTML = `<div class="fila entre"><label class="fila"><b>Curso</b><select class="input" style="width:auto" id="qCurso">${opcionesCursos(cursos, E.cursoSel)}</select></label>
-    ${admin ? '<button class="btn oro" id="bNuevoQ">＋ Nuevo cuestionario</button>' : ''}</div>
+    ${puede('cuestionarios.editar') ? '<button class="btn oro" id="bNuevoQ">＋ Nuevo cuestionario</button>' : ''}</div>
     <p class="muted peq mt">Active un cuestionario para que el curso lo vea y pueda responderlo.${admin ? ' Como administrador también puede habilitarlo para todos los cursos a la vez.' : ''}</p>
+    ${puede('resultados.cargar') ? `<div class="frase mb">${ic('subir', 24)}<div style="flex:1"><b>¿Aplicó una encuesta en papel?</b><span>Use <b>"Cargar en papel"</b>: descargue la matriz, pida a la IA que traspase las encuestas escaneadas y súbala. Quedan registradas igual que las respondidas en línea.</span></div></div>` : ''}
     <div class="tabla-wrap"><table class="tabla"><thead><tr><th>Código</th><th>Cuestionario</th><th>Para</th><th>Preguntas</th><th>Estado en ${h(E.cursoSel)}</th><th></th></tr></thead><tbody>
     ${lista.map(q => `<tr><td><span class="chip">${h(q.codigo)}</span></td><td><b>${h(q.titulo)}</b><div class="muted peq">${h(q.descripcion)}</div></td><td>${h(q.audiencia)}</td><td>${q.nPreguntas}</td>
-      <td><label class="fila"><input type="checkbox" data-hab="${q.id}" ${hab(q) ? 'checked' : ''} ${!E.cursoSel ? 'disabled' : ''}> ${hab(q) ? '<span class="chip ok">Habilitado</span>' : '<span class="chip">Inactivo</span>'}</label>
+      <td><label class="fila"><input type="checkbox" data-hab="${q.id}" ${hab(q) ? 'checked' : ''} ${!E.cursoSel || !puede('cuestionarios.habilitar') ? 'disabled' : ''}> ${hab(q) ? '<span class="chip ok">Habilitado</span>' : '<span class="chip">Inactivo</span>'}</label>
       ${admin ? `<div class="muted peq">Global: ${q.habilitado ? (q.cursos ? h(q.cursos) : 'todos los cursos') : 'desactivado'}</div>` : ''}</td>
-      <td class="fila"><button class="btn mini sec" data-ver="${q.id}">Vista previa</button>${admin ? `<button class="btn mini sec" data-edit="${q.id}">Editar</button><button class="btn mini sec" data-todos="${q.id}" data-on="${q.habilitado && !q.cursos ? 0 : 1}">${q.habilitado && !q.cursos ? 'Desactivar en todos' : 'Habilitar en todos'}</button>` : ''}</td></tr>`).join('')}
+      <td class="fila"><button class="btn mini sec" data-ver="${q.id}">Vista previa</button>${puede('resultados.cargar') ? `<button class="btn mini oro" data-papel="${q.id}">${ic('subir', 14)} Cargar en papel</button>` : ''}${puede('cuestionarios.editar') ? `<button class="btn mini sec" data-edit="${q.id}">Editar</button>` : ''}${admin && puede('cuestionarios.habilitar') ? `<button class="btn mini sec" data-todos="${q.id}" data-on="${q.habilitado && !q.cursos ? 0 : 1}">${q.habilitado && !q.cursos ? 'Desactivar en todos' : 'Habilitar en todos'}</button>` : ''}</td></tr>`).join('')}
     </tbody></table></div>`;
   $('#qCurso').onchange = e => { E.cursoSel = e.target.value; ir('cuestionarios'); };
   $$('[data-hab]', c).forEach(x => x.onchange = async () => {
@@ -627,7 +843,73 @@ VISTAS.cuestionarios = async (c) => {
   $$('[data-ver]', c).forEach(b => b.onclick = () => ir('responder', { id: b.dataset.ver, previa: true }));
   $$('[data-edit]', c).forEach(b => b.onclick = async () => editorCuestionario(await api('cuestionario', { id: b.dataset.edit })));
   if ($('#bNuevoQ')) $('#bNuevoQ').onclick = () => editorCuestionario(null);
+  $$('[data-papel]', c).forEach(b => b.onclick = () => cargaEnPapel(b.dataset.papel));
 };
+
+/** Lee la primera hoja de un .xlsx o un .csv (separado por ; o ,) como lista de objetos. */
+async function leerPlanilla(file, crudo) {
+  await cargarXLSX();
+  let wb;
+  if (/\.csv$/i.test(file.name)) {
+    const texto = (await file.text()).replace(/^﻿/, '');
+    const linea = texto.split(/\r?\n/)[0] || '';
+    wb = XLSX.read(texto, { type: 'string', FS: linea.split(';').length > linea.split(',').length ? ';' : ',', raw: !!crudo });
+  } else wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false });
+  return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: !!crudo });
+}
+
+/**
+ * Encuestas aplicadas en papel: 1) descargar matriz, 2) instrucciones para la IA,
+ * 3) subir la matriz completada. Se validan y registran con origen "manual".
+ */
+async function cargaEnPapel(id) {
+  const m = await api('matrizCuestionario', { id });
+  const c = modal(`<h2>${ic('subir', 22)} Cargar resultados en papel</h2><p class="muted"><span class="chip">${h(m.codigo)}</span> ${h(m.titulo)}</p>
+    <div class="pasos-papel">
+      <div class="paso-papel"><span class="ed-num">1</span><div><b>Descargue la matriz</b><p class="muted peq">Planilla Excel con una columna por pregunta y una hoja de instrucciones con los códigos.</p><button class="btn mini sec" id="pDesc">${ic('descargar', 15)} Descargar matriz (.xlsx)</button></div></div>
+      <div class="paso-papel"><span class="ed-num">2</span><div><b>Pida a la IA que traspase las encuestas</b><p class="muted peq">Copie estas instrucciones en su asistente de IA (Claude, ChatGPT, Gemini…) junto con las fotos o escaneos de las encuestas. Ella le devolverá la matriz completa.</p>
+        <textarea class="input" id="pIA" readonly style="min-height:150px;font-size:.8rem">${h(m.instruccionesIA)}</textarea><div class="fila mt"><button class="btn mini sec" id="pCopiar">${ic('check', 15)} Copiar instrucciones</button><button class="btn mini fantasma" id="pTxt">${ic('descargar', 15)} Descargar .txt</button></div>
+        <p class="peq" style="color:var(--alerta)">${ic('escudo', 14)} Son datos de menores de edad: use una IA institucional con acuerdo de tratamiento de datos o cubra los nombres antes de enviar las imágenes (Ley 21.719).</p></div></div>
+      <div class="paso-papel"><span class="ed-num">3</span><div><b>Revise y suba la matriz completada</b><p class="muted peq">Verifique las celdas dudosas que le indique la IA. Acepta .xlsx o .csv.</p>
+        <label class="fila peq"><input type="checkbox" id="pSobre"> Reemplazar respuestas ya registradas de esas personas</label>
+        <div class="drop mt" id="pDrop">Arrastre el archivo aquí o <label style="color:var(--mar);cursor:pointer;font-weight:700">elíjalo<input type="file" id="pFile" accept=".xlsx,.xls,.csv" hidden></label></div><div id="pRes" class="mt"></div></div></div>
+    </div>`, true);
+  $('#pDesc', c).onclick = async () => {
+    try {
+      await cargarXLSX();
+      const ws = XLSX.utils.aoa_to_sheet([m.columnas.map(x => x.titulo)]);
+      ws['!cols'] = m.columnas.map(x => ({ wch: Math.min(40, Math.max(12, x.titulo.length * .6)) }));
+      const ins = XLSX.utils.aoa_to_sheet([['Columna', 'Qué escribir']].concat(m.columnas.map(x => [x.titulo, x.ayuda])).concat([[], ['Instrucciones para la IA'], [m.instruccionesIA]]));
+      ins['!cols'] = [{ wch: 60 }, { wch: 70 }];
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Respuestas'); XLSX.utils.book_append_sheet(wb, ins, 'Instrucciones');
+      XLSX.writeFile(wb, `matriz_${m.codigo}.xlsx`);
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#pCopiar', c).onclick = () => copiarTexto(m.instruccionesIA, 'Instrucciones copiadas');
+  $('#pTxt', c).onclick = () => descargar(`instrucciones_IA_${m.codigo}.txt`, m.instruccionesIA);
+  const procesar = async file => {
+    const res = $('#pRes', c); res.innerHTML = cargando('Leyendo la matriz…');
+    try {
+      const filas = await leerPlanilla(file, false);
+      if (!filas.length) throw new Error('La matriz no tiene filas.');
+      res.innerHTML = cargando(`Registrando ${filas.length} encuesta(s)…`);
+      const tot = { nuevas: 0, actualizadas: 0, omitidas: 0, errores: [] };
+      for (let i = 0; i < filas.length; i += 80) {
+        const r = await api('importarResultados', { id, filas: filas.slice(i, i + 80), sobrescribir: $('#pSobre', c).checked });
+        tot.nuevas += r.nuevas; tot.actualizadas += r.actualizadas; tot.omitidas += r.omitidas;
+        tot.errores.push(...r.errores.map(e => e.replace(/Fila (\d+)/, (x, n) => 'Fila ' + (Number(n) + i))));
+      }
+      res.innerHTML = `<div class="aviso-clave" style="background:#e6f6ee;border-color:#bfe5d3;color:#155a3b">${ic('check', 20)}<span><b>${tot.nuevas}</b> nuevas · <b>${tot.actualizadas}</b> reemplazadas · <b>${tot.omitidas}</b> omitidas (ya respondidas)</span></div>
+        ${tot.errores.length ? `<div class="tarjeta plana mt peq" style="max-height:200px;overflow:auto"><b>Revise:</b><br>${tot.errores.slice(0, 60).map(h).join('<br>')}</div>` : ''}`;
+      toast('Resultados registrados');
+    } catch (e) { res.innerHTML = `<p class="err">${h(e.message)}</p>`; }
+  };
+  $('#pFile', c).onchange = e => e.target.files[0] && procesar(e.target.files[0]);
+  const drop = $('#pDrop', c);
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('sobre'); };
+  drop.ondragleave = () => drop.classList.remove('sobre');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('sobre'); if (e.dataTransfer.files[0]) procesar(e.dataTransfer.files[0]); };
+}
 
 function editorCuestionario(q) {
   q = q || { codigo: '', titulo: '', descripcion: '', audiencia: 'estudiantes', sesionId: '', preguntas: [] };
@@ -670,7 +952,8 @@ VISTAS.responder = async (c, p) => {
   const previa = q.previa || {};
   const soloVer = esPersonal();
   $('#tituloVista').textContent = q.codigo;
-  c.innerHTML = `<button class="btn fantasma mini" onclick="ir('cuestionarios')">← Volver</button>
+  const volver = p.volver ? `ir('sesion',{id:'${h(p.volver)}'})` : `ir('cuestionarios')`;
+  c.innerHTML = `<button class="btn fantasma mini" onclick="${volver}">← Volver</button>
     <div class="tarjeta mt"><span class="chip oro">${h(q.codigo)}</span><h1 class="mt" style="font-size:1.7rem">${h(q.titulo)}</h1><p class="muted">${h(q.descripcion)}</p>
     <div class="progreso" aria-hidden="true"><div id="barra" style="width:0%"></div></div>
     <form id="fQ" class="mt">${q.preguntas.map(pr => renderPregunta(pr, previa[pr.id])).join('')}
@@ -689,7 +972,7 @@ VISTAS.responder = async (c, p) => {
       const r = await api('responder', { id: q.id, respuestas: recogerRespuestas(q.preguntas, f) });
       c.innerHTML = `<div class="resultado">${confeti()}<div class="fila" style="gap:18px">${insignia(q.codigo, true, q.titulo)}<div><span class="chip ok">${ic('check', 14)} ¡Nueva insignia desbloqueada!</span><h2 class="mt">${r.resultado.titulo}</h2></div></div>${r.resultado.mensajes.map(m => `<p>${sanear(m)}</p>`).join('')}
         ${r.resultado.datos.riasec ? '<div class="lienzo" style="background:#fff;border-radius:14px;padding:10px"><canvas id="cRes"></canvas></div>' : ''}
-        <div class="fila mt"><button class="btn" onclick="ir('resultados')">Ver mis resultados</button><button class="btn sec" onclick="ir('inicio')">Ir al inicio</button></div></div>`;
+        <div class="fila mt">${p.volver ? `<button class="btn oro" onclick="${volver}">Volver a la sesión</button>` : ''}<button class="btn" onclick="ir('resultados')">Ver mis resultados</button><button class="btn sec" onclick="ir('inicio')">Ir al inicio</button></div></div>`;
       if (r.resultado.datos.riasec) graficoRiasec($('#cRes'), r.resultado.datos.riasec);
     } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Enviar respuestas'; }
   };
@@ -804,7 +1087,7 @@ async function formAviso() {
   const cursos = await misCursos();
   const c = modal(`<h2>📣 Mensaje masivo</h2><p class="muted">Se publica en el muro del curso. Si marca "copia individual", llega además a la bandeja privada de cada destinatario.</p>
     <label class="campo"><span>Para</span><select class="input" id="aPara"><option value="aviso_estudiantes">Estudiantes</option><option value="aviso_familias">Familias (apoderados)</option><option value="aviso_todos">Estudiantes y familias</option></select></label>
-    <label class="campo"><span>Cursos</span><select class="input" id="aCur" multiple size="${Math.min(6, cursos.length + 1)}">${E.perfil.rol === 'admin' ? '<option value="">Todos los cursos</option>' : ''}${cursos.map(x => `<option selected>${h(x.curso)}</option>`).join('')}</select></label>
+    <label class="campo"><span>Cursos</span><select class="input" id="aCur" multiple size="${Math.min(6, cursos.length + 1)}">${esAdminC() ? '<option value="">Todos los cursos</option>' : ''}${cursos.map(x => `<option selected>${h(x.curso)}</option>`).join('')}</select></label>
     <label class="campo"><span>Mensaje</span><textarea class="input" id="aTxt" maxlength="3000"></textarea></label>
     <label class="fila"><input type="checkbox" id="aInd"> Enviar también copia individual a cada persona</label>
     <div class="fila mt"><button class="btn oro" id="bPub">Publicar</button><button class="btn fantasma" data-cerrar>Cancelar</button></div>`);
@@ -822,7 +1105,7 @@ async function formAviso() {
  * ===================================================================== */
 VISTAS.cuenta = async (c) => {
   const p = E.perfil;
-  c.innerHTML = `<div class="grid g2"><div class="tarjeta"><div class="fila"><div class="avatar g">${h(iniciales(p.nombre))}</div><div><h3 style="margin:0">${h(p.nombre)}</h3><div class="muted">${h(ROL_TXT[p.rol])}${p.estudianteNombre && p.rol === 'apoderado' ? ' de ' + h(p.estudianteNombre) : ''}</div><div class="muted peq">${h(p.cursos.join(', '))}</div></div></div>
+  c.innerHTML = `<div class="grid g2"><div class="tarjeta"><div class="fila"><div class="avatar g">${h(iniciales(p.nombre))}</div><div><h3 style="margin:0">${h(p.nombre)}</h3><div class="muted">${h(rolTexto(p))}${p.estudianteNombre && p.rol === 'apoderado' ? ' de ' + h(p.estudianteNombre) : ''}</div><div class="muted peq">${h(p.cursos.join(', '))}</div></div></div>
       <div class="fila mt"><button class="btn" id="bClave">🔐 Cambiar mi clave</button><button class="btn sec" id="bDatos">⬇️ Descargar mis datos</button></div>
       <p class="muted peq mt">${p.rol === 'estudiante' || p.rol === 'apoderado' ? 'Cada perfil (estudiante, madre, padre, tutor) tiene su propia clave. Si cambias la tuya, los demás siguen entrando con la suya.' : ''}</p></div>
     <div class="tarjeta"><h3>🔒 Privacidad y derechos</h3><p class="peq">Puede ejercer sus derechos de acceso, rectificación, supresión, oposición, portabilidad y bloqueo (Ley 21.719) escribiendo a <a href="mailto:${h(E.info.contactoPrivacidad)}">${h(E.info.contactoPrivacidad)}</a>.</p><button class="btn sec" id="bPriv">Ver aviso de privacidad</button></div></div>`;
@@ -871,7 +1154,7 @@ VISTAS.cursos = async (c) => {
 
 VISTAS.estudiante = async (c, p) => {
   const d = await api('reporteEstudiante', { rut: p.rut });
-  const pr = d.proyeccion, e = d.estudiante, admin = E.perfil.rol === 'admin';
+  const pr = d.proyeccion, e = d.estudiante, admin = puede('retro.visibilidad');
   $('#tituloVista').textContent = 'Reporte individual';
   c.innerHTML = `<div class="fila entre no-print"><button class="btn fantasma mini" onclick="ir('cursos')">← Volver al curso</button><div class="fila">
       <button class="btn sec mini" id="bImp">🖨️ Imprimir / PDF</button><button class="btn sec mini" id="bCsvE">⬇️ CSV</button></div></div>
@@ -917,7 +1200,7 @@ async function panelIA(cont, params, etiqueta) {
     const k = a.contenido || {};
     const lista = (t, ico, arr) => arr && arr.length ? `<h4>${ico} ${t}</h4><ul>${arr.map(x => `<li>${h(x)}</li>`).join('')}</ul>` : '';
     cont.innerHTML = `<div class="ia-card"><div class="fila entre"><h3 style="margin:0">✨ Análisis e interpretación ${params.tipo === 'curso' ? 'del curso' : 'individual'}</h3>
-      <div class="fila no-print">${a.existe ? '' : '<button class="btn oro mini" data-gen>Generar análisis</button>'}${a.desactualizado ? '<button class="btn oro mini" data-gen>Actualizar con datos nuevos</button>' : ''}${a.existe && E.perfil.rol === 'admin' ? '<button class="btn fantasma mini" data-forzar title="Solo administración">↻ Regenerar</button>' : ''}</div></div>
+      <div class="fila no-print">${a.existe ? '' : '<button class="btn oro mini" data-gen>Generar análisis</button>'}${a.desactualizado ? '<button class="btn oro mini" data-gen>Actualizar con datos nuevos</button>' : ''}${a.existe && esAdminC() ? '<button class="btn fantasma mini" data-forzar title="Solo administración">↻ Regenerar</button>' : ''}</div></div>
       ${!a.existe ? `<p class="muted">Aún no se ha generado el análisis para ${h(etiqueta)}. Al generarlo, quedará guardado y <b>todo el equipo verá exactamente el mismo</b> mientras los datos no cambien.</p>` : `
       ${a.desactualizado ? '<p class="chip alerta">Hay respuestas nuevas desde este análisis. Actualícelo para incluirlas.</p>' : ''}
       ${k.nota ? `<p class="chip alerta">${h(k.nota)}</p>` : ''}
@@ -1023,7 +1306,14 @@ VISTAS.reportes = async (c, p) => {
     ${d.cuestionarios.length ? d.cuestionarios.map((q, qi) => `<div class="tarjeta mt"><div class="fila entre"><h3 style="margin:0"><span class="chip">${h(q.codigo)}</span> ${h(q.titulo)}</h3><span class="chip ${q.respondieron ? 'ok' : ''}">${q.respondieron} respuesta(s)</span></div>
       <div class="grid g2 mt">${q.preguntas.map((pr, pi) => `<div class="tarjeta plana"><b class="peq">${pr.n}. ${h(pr.texto)}</b>${Object.keys(pr.conteo).length ? `<div class="lienzo" style="height:200px"><canvas data-g="${qi}-${pi}"></canvas></div>` : ''}
         ${pr.abiertas.length ? `<div style="max-height:200px;overflow:auto" class="mt">${pr.abiertas.map(a => `<p class="peq" style="margin:.3em 0;border-left:3px solid var(--oro);padding-left:8px"><b>${h(a.nombre.split(' ')[0])}:</b> ${h(a.texto)}</p>`).join('')}</div>` : ''}
-        ${!Object.keys(pr.conteo).length && !pr.abiertas.length ? '<p class="muted peq">Sin respuestas.</p>' : ''}</div>`).join('')}</div></div>`).join('') : vacio('📝', 'Esta sesión no tiene cuestionarios asociados.')}`;
+        ${!Object.keys(pr.conteo).length && !pr.abiertas.length ? '<p class="muted peq">Sin respuestas.</p>' : ''}</div>`).join('')}</div></div>`).join('') : vacio('📝', 'Esta sesión no tiene cuestionarios asociados.')}
+    ${(d.trabajos || []).length ? `<h3 class="mt2">${ic('lapiz', 20)} Ejercicios desarrollados en la guía</h3>${d.trabajos.map(t => `<details class="tarjeta mt" ${t.respuestas.length ? 'open' : ''}><summary class="fila entre" style="cursor:pointer"><b>${h(t.titulo)}</b><span class="chip ${t.respuestas.length ? 'ok' : ''}">${t.respuestas.length} de ${d.estudiantes}</span></summary>
+      ${t.respuestas.length ? `<div class="tabla-wrap mt"><table class="tabla"><thead><tr><th>Nombre</th>${(t.campos.length ? t.campos : ['Respuesta']).map(x => `<th>${h(x.length > 40 ? x.slice(0, 38) + '…' : x)}</th>`).join('')}<th>Foto</th></tr></thead><tbody>
+        ${t.respuestas.map(r => `<tr><td><b>${h(r.nombre)}</b><div class="muted peq">${h(r.quien)} · ${fecha(r.fecha)}</div></td>${(t.campos.length ? t.campos.map((_, j) => r.campos['c' + j]) : [r.texto]).map(v => `<td class="peq" style="white-space:pre-wrap">${h(v || '—')}</td>`).join('')}
+        <td>${r.tieneImagen ? `<button class="btn mini sec no-print" data-foto="${h(r.id)}">${ic('imagen', 14)} Ver</button>` : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted peq">Aún nadie desarrolla este ejercicio.</p>'}</details>`).join('')}` : ''}`;
+  $$('[data-foto]', rs).forEach(b => b.onclick = async () => {
+    try { const r = await api('imagenTrabajo', { id: b.dataset.foto }); modal(`<img src="${r.uri}" alt="Foto del ejercicio" style="border-radius:14px;width:100%">`, true); } catch (e) { toast(e.message, true); }
+  });
   d.cuestionarios.forEach((q, qi) => q.preguntas.forEach((pr, pi) => {
     const k = Object.keys(pr.conteo); if (!k.length) return;
     graficar($(`[data-g="${qi}-${pi}"]`, rs), { type: 'bar', data: { labels: k.map(x => x.length > 28 ? x.slice(0, 26) + '…' : x), datasets: [{ data: k.map(x => pr.conteo[x]), backgroundColor: COLORES[pi % COLORES.length], borderRadius: 6 }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } } });
@@ -1032,6 +1322,7 @@ VISTAS.reportes = async (c, p) => {
   $('#bCsvS').onclick = () => {
     const filas = [['Cuestionario', 'Estudiante', 'Responde', 'Fecha', 'Pregunta', 'Respuesta', 'Puntajes']];
     d.cuestionarios.forEach(q => q.filas.forEach(f => Object.keys(f.respuestas).forEach(k => filas.push([q.codigo, f.nombre, f.quien, f.fecha, k, valorTxt(f.respuestas[k]), JSON.stringify(f.puntajes)]))));
+    (d.trabajos || []).forEach(t => t.respuestas.forEach(r => (t.campos.length ? t.campos : ['Respuesta']).forEach((cmp, j) => filas.push(['Ejercicio: ' + t.titulo, r.nombre, r.quien, r.fecha, cmp, t.campos.length ? (r.campos['c' + j] || '') : r.texto, r.tieneImagen ? 'con foto' : '']))));
     descargar(`sesion-${d.sesion.numero}-${d.curso}.csv`, csv(filas), 'text/csv;charset=utf-8');
   };
 };
@@ -1042,21 +1333,23 @@ VISTAS.reportes = async (c, p) => {
 VISTAS.usuarios = async (c, p) => {
   const f = Object.assign({ rol: '', q: '', curso: '' }, p);
   const cursos = await misCursos();
-  const us = await api('usuarios', f);
+  const [us, pf] = await Promise.all([api('usuarios', f), api('perfiles')]);
+  const nomPerfil = {}; pf.perfiles.forEach(x => { nomPerfil[x.id] = x.nombre; });
+  const etiquetaRol = u => u.rol === 'personalizado' ? 'Funcionario · ' + (nomPerfil[u.perfilId] || 'perfil') : ROL_TXT[u.rol];
   c.innerHTML = `<div class="fila entre"><div class="fila"><input class="input" id="uQ" placeholder="Buscar por nombre o RUT" value="${h(f.q)}" style="width:230px">
-      <select class="input" id="uRol" style="width:auto"><option value="">Todos los roles</option>${Object.keys(ROL_TXT).map(r => `<option value="${r}" ${f.rol === r ? 'selected' : ''}>${ROL_TXT[r]}</option>`).join('')}</select>
+      <select class="input" id="uRol" style="width:auto"><option value="">Todos los perfiles</option>${Object.keys(ROL_TXT).map(r => `<option value="${r}" ${f.rol === r ? 'selected' : ''}>${r === 'personalizado' ? 'Funcionario · perfiles creados' : ROL_TXT[r]}</option>`).join('')}</select>
       <select class="input" id="uCur" style="width:auto"><option value="">Todos los cursos</option>${cursos.map(x => `<option ${f.curso === x.curso ? 'selected' : ''}>${h(x.curso)}</option>`).join('')}</select><button class="btn sec" id="uFil">Filtrar</button></div>
-    <div class="fila"><button class="btn sec" id="bApo">＋ Apoderado/tutor extra</button><button class="btn oro" id="bNuevoU">＋ Docente / asistente / admin</button></div></div>
+    <div class="fila"><button class="btn sec" id="bApo">＋ Adulto responsable extra</button><button class="btn oro" id="bNuevoU">＋ Funcionario</button></div></div>
     <p class="muted peq mt">${us.length} cuenta(s). Las claves nunca se muestran: solo pueden restablecerse.</p>
     <div class="tabla-wrap"><table class="tabla"><thead><tr><th>Nombre</th><th>RUT</th><th>Rol</th><th>Curso(s)</th><th>Estado</th><th>Último acceso</th><th></th></tr></thead><tbody>
-    ${us.slice(0, 400).map(u => `<tr><td><b>${h(u.nombre)}</b>${u.estudianteNombre && u.rol === 'apoderado' ? `<div class="muted peq">${h(u.parentesco)} de ${h(u.estudianteNombre)}</div>` : ''}</td><td class="peq">${h(u.rut)}</td><td><span class="chip ${u.rol === 'admin' ? 'oro' : u.rol === 'apoderado' ? 'violeta' : ''}">${h(ROL_TXT[u.rol])}</span></td>
+    ${us.slice(0, 400).map(u => `<tr><td><b>${h(u.nombre)}</b>${u.estudianteNombre && u.rol === 'apoderado' ? `<div class="muted peq">${h(u.parentesco)} de ${h(u.estudianteNombre)}</div>` : ''}</td><td class="peq">${h(u.rut)}</td><td><span class="chip ${u.rol === 'admin' ? 'oro' : u.rol === 'apoderado' ? 'violeta' : ''}">${h(etiquetaRol(u))}</span></td>
       <td class="peq">${h(u.curso || u.cursos || '—')}</td><td>${u.activo ? '<span class="chip ok">Activo</span>' : '<span class="chip peligro">Inactivo</span>'}${u.debeCambiar ? ' <span class="chip">Clave inicial</span>' : ''}</td><td class="peq">${h(u.ultimoAcceso || '—')}</td>
       <td class="fila"><button class="btn mini sec" data-ed='${h(JSON.stringify(u))}'>Editar</button><button class="btn mini sec" data-rc="${h(u.id)}">Restablecer clave</button><button class="btn mini fantasma" data-del="${h(u.id)}" title="Eliminar cuenta">🗑️</button>${u.rol === 'estudiante' ? `<button class="btn mini peligro" data-sup="${h(u.rut)}" title="Derecho de supresión">Suprimir datos</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
   const filtrar = () => ir('usuarios', { q: $('#uQ').value, rol: $('#uRol').value, curso: $('#uCur').value });
   $('#uFil').onclick = filtrar; $('#uQ').onkeydown = e => { if (e.key === 'Enter') filtrar(); };
-  $('#bNuevoU').onclick = () => formUsuario(null, cursos);
+  $('#bNuevoU').onclick = () => formUsuario(null, cursos, pf.perfiles);
   $('#bApo').onclick = () => formApoderado();
-  $$('[data-ed]', c).forEach(b => b.onclick = () => formUsuario(JSON.parse(b.dataset.ed), cursos));
+  $$('[data-ed]', c).forEach(b => b.onclick = () => formUsuario(JSON.parse(b.dataset.ed), cursos, pf.perfiles));
   $$('[data-rc]', c).forEach(b => b.onclick = async () => {
     if (!confirm('¿Restablecer la clave de esta cuenta? Estudiantes y familias vuelven a la fecha de nacimiento del estudiante.')) return;
     try { const r = await api('restablecerClave', { id: b.dataset.rc }); r.claveTemporal ? modal(`<h2>Clave temporal</h2><p>Entregue esta clave de forma privada. Se pedirá cambiarla al ingresar.</p><p class="display" style="font-size:2rem;text-align:center">${h(r.claveTemporal)}</p>`) : toast('Clave restablecida a la fecha de nacimiento (DDMMAAAA)'); } catch (e) { toast(e.message, true); }
@@ -1067,12 +1360,14 @@ VISTAS.usuarios = async (c, p) => {
   });
   $$('[data-del]', c).forEach(b => b.onclick = async () => { if (!confirm('¿Eliminar definitivamente esta cuenta?')) return; try { await api('eliminarUsuario', { id: b.dataset.del }); toast('Cuenta eliminada'); filtrar(); } catch (e) { toast(e.message, true); } });
 };
-function formUsuario(u, cursos) {
-  const personal = !u || ['admin', 'docente', 'asistente'].includes(u.rol);
+function formUsuario(u, cursos, perfiles) {
+  const personal = !u || ['admin', 'docente', 'asistente', 'personalizado'].includes(u.rol);
+  const opciones = (perfiles || []).filter(x => x.base === 'funcionario').map(x => [x.sistema ? x.id : 'perfil:' + x.id, x.nombre]);
+  const actual = u ? (u.perfilClave || u.rol) : 'docente';
   const c = modal(`<h2>${u ? 'Editar cuenta' : 'Nuevo integrante del equipo'}</h2>
-    ${!u ? '<label class="campo"><span>RUT</span><input class="input" id="fRut" placeholder="12.345.678-9"></label>' : `<p class="muted">${h(u.rut)} · ${h(ROL_TXT[u.rol])}</p>`}
+    ${!u ? '<label class="campo"><span>RUT</span><input class="input" id="fRut" placeholder="12.345.678-9"></label>' : `<p class="muted">${h(u.rut)} · ${h(rolTexto(u))}</p>`}
     <label class="campo"><span>Nombre completo</span><input class="input" id="fNom" value="${h(u ? u.nombre : '')}"></label>
-    ${personal ? `<label class="campo"><span>Rol</span><select class="input" id="fRol">${['docente', 'asistente', 'admin'].map(r => `<option value="${r}" ${u && u.rol === r ? 'selected' : ''}>${ROL_TXT[r]}</option>`).join('')}</select></label>
+    ${personal ? `<label class="campo"><span>Perfil de funcionario</span><select class="input" id="fRol">${opciones.map(o => `<option value="${h(o[0])}" ${actual === o[0] ? 'selected' : ''}>${h(o[1])}</option>`).join('')}</select><small>Los permisos de cada perfil se definen en <b>Perfiles y permisos</b>.</small></label>
     <label class="campo"><span>Cursos asignados</span><select class="input" id="fCur" multiple size="${Math.min(8, cursos.length || 2)}">${cursos.map(x => `<option ${u && (u.cursos || '').split(/[,;]/).map(s => s.trim()).includes(x.curso) ? 'selected' : ''}>${h(x.curso)}</option>`).join('')}</select><small>También puede escribirlos: <input class="input mt" id="fCurTxt" placeholder="8° A, 8° B" value="${h(u ? u.cursos : '')}"></small></label>
     <label class="campo"><span>Correo (opcional)</span><input class="input" id="fMail" type="email" value="${h(u ? u.email : '')}"></label>` : ''}
     ${u ? `<label class="fila"><input type="checkbox" id="fAct" ${u.activo ? 'checked' : ''}> Cuenta activa</label>` : ''}
@@ -1091,13 +1386,72 @@ function formUsuario(u, cursos) {
   };
 }
 function formApoderado() {
-  const c = modal(`<h2>Acceso adicional para apoderado/a</h2><p class="muted">Úselo cuando el tutor no es padre ni madre, o para crear un acceso que faltó. Ingresará con el RUT y la fecha de nacimiento del estudiante.</p>
+  const c = modal(`<h2>Acceso adicional para adulto responsable</h2><p class="muted">Úselo cuando el tutor no es padre ni madre, o para crear un acceso que faltó. Ingresará con el RUT y la fecha de nacimiento del estudiante.</p>
     <label class="campo"><span>RUT del estudiante</span><input class="input" id="aRut"></label>
     <label class="campo"><span>Nombre del apoderado/a</span><input class="input" id="aNom"></label>
     <label class="campo"><span>Acceso como</span><select class="input" id="aPar"><option value="tutor">Tutor/a</option><option value="madre">Madre</option><option value="padre">Padre</option></select></label>
     <div class="fila mt"><button class="btn oro" id="bGA">Crear acceso</button><button class="btn fantasma" data-cerrar>Cancelar</button></div>`);
   $('#bGA', c).onclick = async () => { try { await api('guardarUsuario', { rol: 'apoderado', estudianteRut: $('#aRut', c).value, nombre: $('#aNom', c).value, parentesco: $('#aPar', c).value }); cerrarModal(); toast('Acceso creado'); ir('usuarios'); } catch (e) { toast(e.message, true); } };
 }
+
+/* ---------- Cursos (creados por la administración o cargados desde Excel) ---------- */
+VISTAS.gestionCursos = async (c) => {
+  E._cursos = null;
+  const cursos = await misCursos();
+  c.innerHTML = `<div class="fila entre"><p class="muted" style="margin:0">Cree cursos antes de cargar estudiantes, o complete los datos de los que llegaron desde el Excel. Después asigne funcionarios a cada curso en <b>Usuarios</b>.</p>
+    <button class="btn oro" id="bNuevoCurso">＋ Nuevo curso</button></div>
+    <div class="grid g3 mt">${cursos.map((x, i) => `<div class="tarjeta curso-card"><div class="curso-portada">${escena(['brujula', 'estrella', 'lupa', 'balanza', 'bandera', 'camino'][i % 6])}<span class="curso-nombre">${h(x.curso)}</span></div>
+      <div class="fila entre"><span class="chip">${ic('mochila', 14)} ${x.estudiantes} estudiantes</span>${x.nivel ? `<span class="chip violeta">${h(x.nivel)}</span>` : ''}</div>
+      <div style="padding:6px 16px 0" class="peq muted">${x.profesorJefe ? 'Profesor/a jefe: <b>' + h(x.profesorJefe) + '</b><br>' : ''}${h(x.descripcion || '')}</div>
+      <div class="fila mt"><button class="btn mini sec" data-ec='${h(JSON.stringify(x))}'>${ic('lapiz', 14)} Editar</button>${!x.estudiantes && x.registrado ? `<button class="btn mini fantasma" data-dc="${h(x.curso)}">🗑️ Eliminar</button>` : ''}</div></div>`).join('') || vacio(ic('colegio', 28), 'Aún no hay cursos. Cree el primero.')}</div>`;
+  const form = x => {
+    const m = modal(`<h2>${x ? 'Editar curso' : 'Nuevo curso'}</h2>
+      <label class="campo"><span>Nombre del curso</span><input class="input" id="cNom" value="${h(x ? x.curso : '')}" placeholder="8° A"><small>Use el mismo nombre que viene en la columna "Curso" del Excel.</small></label>
+      <div class="grid g2"><label class="campo"><span>Nivel</span><input class="input" id="cNiv" value="${h(x ? x.nivel || '' : '')}" placeholder="8° básico"></label>
+      <label class="campo"><span>Profesor/a jefe</span><input class="input" id="cPJ" value="${h(x ? x.profesorJefe || '' : '')}"></label></div>
+      <label class="campo"><span>Descripción (opcional)</span><textarea class="input" id="cDes" style="min-height:60px">${h(x ? x.descripcion || '' : '')}</textarea></label>
+      <div class="fila"><button class="btn oro" id="cGuardar">Guardar</button><button class="btn fantasma" data-cerrar>Cancelar</button></div>`);
+    $('#cGuardar', m).onclick = async () => {
+      try { await api('guardarCurso', { original: x && x.registrado ? x.curso : '', curso: $('#cNom', m).value, nivel: $('#cNiv', m).value, profesorJefe: $('#cPJ', m).value, descripcion: $('#cDes', m).value }); cerrarModal(); toast('Curso guardado'); ir('gestionCursos'); }
+      catch (e) { toast(e.message, true); }
+    };
+  };
+  $('#bNuevoCurso').onclick = () => form(null);
+  $$('[data-ec]', c).forEach(b => b.onclick = () => form(JSON.parse(b.dataset.ec)));
+  $$('[data-dc]', c).forEach(b => b.onclick = async () => { if (!confirm('¿Eliminar el curso ' + b.dataset.dc + '?')) return; try { await api('eliminarCurso', { curso: b.dataset.dc }); toast('Curso eliminado'); ir('gestionCursos'); } catch (e) { toast(e.message, true); } });
+  cargarImagenes(c);
+};
+
+/* ---------- Perfiles y permisos ---------- */
+VISTAS.perfiles = async (c) => {
+  const { perfiles, catalogo } = await api('perfiles');
+  const BASES = { alumno: ['mochila', 'Alumno/a', '#e3b505'], adulto: ['manos', 'Adulto responsable', '#c8553d'], funcionario: ['colegio', 'Funcionario', '#6c4ab6'] };
+  c.innerHTML = `<p class="muted">Defina qué puede hacer cada perfil. Los perfiles de ingreso son tres: <b>Alumno/a</b>, <b>Adulto responsable</b> y <b>Funcionario</b>. Dentro de Funcionario puede crear perfiles nuevos (por ejemplo, "Orientador/a", "Profesor jefe" o "Dupla psicosocial") con todas o algunas funciones.</p>
+    ${['alumno', 'adulto', 'funcionario'].map(base => `<div class="fila entre mt2"><h3 style="margin:0;color:${BASES[base][2]}">${ic(BASES[base][0], 22)} ${BASES[base][1]}</h3>${base === 'funcionario' ? '<button class="btn oro mini" id="bNuevoPerfil">＋ Nuevo perfil de funcionario</button>' : ''}</div>
+      <div class="grid g3 mt">${perfiles.filter(p => p.base === base).map(p => `<div class="tarjeta perfil-card" style="--c:${BASES[base][2]}">
+        <div class="fila entre"><b>${h(p.nombre)}</b><span class="chip">${p.usuarios} usuario(s)</span></div>
+        <div class="peq muted mt">${p.fijo ? 'Tiene todas las funciones (no se modifica).' : p.permisos.length + ' de ' + catalogo[base].length + ' funciones activas'}</div>
+        <div class="permisos-mini">${catalogo[base].map(x => `<span class="${p.permisos.includes(x[0]) ? 'on' : ''}" title="${h(x[1])}"></span>`).join('')}</div>
+        ${p.fijo ? '' : `<div class="fila mt"><button class="btn mini sec" data-pf="${h(p.id)}">${ic('lapiz', 14)} Editar permisos</button>${!p.sistema && !p.usuarios ? `<button class="btn mini fantasma" data-pfx="${h(p.id)}">🗑️</button>` : ''}</div>`}</div>`).join('')}</div>`).join('')}`;
+  const editar = p => {
+    const lista = catalogo[p.base];
+    const m = modal(`<h2>${p.id ? 'Permisos: ' + h(p.nombre) : 'Nuevo perfil de funcionario'}</h2>
+      <label class="campo"><span>Nombre del perfil</span><input class="input" id="pfNom" value="${h(p.nombre || '')}" placeholder="Ej. Orientador/a"></label>
+      <div class="fila"><button class="btn mini sec" id="pfTodo">Marcar todo</button><button class="btn mini fantasma" id="pfNada">Desmarcar todo</button></div>
+      <div class="lista-permisos mt">${lista.map(x => `<label class="permiso"><input type="checkbox" value="${h(x[0])}" ${(p.permisos || []).includes(x[0]) ? 'checked' : ''}><span><b>${h(x[1])}</b></span></label>`).join('')}</div>
+      ${p.base === 'funcionario' ? '<p class="muted peq">"Acceso a TODOS los cursos" permite ver y gestionar cualquier curso; sin él, solo los cursos asignados al usuario.</p>' : ''}
+      <div class="fila mt"><button class="btn oro" id="pfGuardar">Guardar</button><button class="btn fantasma" data-cerrar>Cancelar</button></div>`, true);
+    $('#pfTodo', m).onclick = () => $$('.permiso input', m).forEach(x => x.checked = true);
+    $('#pfNada', m).onclick = () => $$('.permiso input', m).forEach(x => x.checked = false);
+    $('#pfGuardar', m).onclick = async () => {
+      try { await api('guardarPerfil', { id: p.id, nombre: $('#pfNom', m).value, permisos: $$('.permiso input:checked', m).map(x => x.value) }); cerrarModal(); toast('Perfil guardado. Los cambios aplican de inmediato.'); ir('perfiles'); }
+      catch (e) { toast(e.message, true); }
+    };
+  };
+  $('#bNuevoPerfil').onclick = () => editar({ base: 'funcionario', permisos: ['cursos.ver', 'reportes', 'mensajes'] });
+  $$('[data-pf]', c).forEach(b => b.onclick = () => editar(perfiles.find(p => p.id === b.dataset.pf)));
+  $$('[data-pfx]', c).forEach(b => b.onclick = async () => { if (!confirm('¿Eliminar este perfil?')) return; try { await api('eliminarPerfil', { id: b.dataset.pfx }); ir('perfiles'); } catch (e) { toast(e.message, true); } });
+};
 
 const COLUMNAS = ['Rut', 'DV', 'NombreAlumno', 'Sexo', 'FechaNac', 'Curso', 'Local', 'FecMatriculado', 'Direccion', 'Comuna', 'Nombre Padre', 'Nombre Madre', 'Nombre Tutor'];
 VISTAS.carga = async (c) => {
@@ -1109,14 +1463,13 @@ VISTAS.carga = async (c) => {
       <li>Si el estudiante ya existe, se actualizan sus datos sin cambiar claves.</li></ul>
       <button class="btn sec mini" id="bPlantilla">⬇️ Descargar plantilla Excel</button></div>
     <div class="tarjeta"><div class="drop" id="drop">Arrastre el archivo aquí o <label style="color:var(--mar);cursor:pointer;font-weight:700">elíjalo<input type="file" id="fx" accept=".xlsx,.xls,.csv" hidden></label></div><div id="prev" class="mt"></div></div></div>`;
-  $('#bPlantilla').onclick = () => {
+  $('#bPlantilla').onclick = async () => {
+    await cargarXLSX();
     const ws = XLSX.utils.aoa_to_sheet([COLUMNAS, ['12345678', '5', 'Nombre Apellido Apellido', 'F', '05-03-2012', '8° A', 'Concepción', '01-03-2026', 'Calle 123', 'Concepción', 'Nombre del padre', 'Nombre de la madre', '']]);
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Estudiantes'); XLSX.writeFile(wb, 'plantilla_carga_estudiantes.xlsx');
   };
   const procesar = async (file) => {
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array', cellDates: false, raw: false });
-    const filas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: true });
+    const filas = await leerPlanilla(file, true);
     if (!filas.length) return toast('El archivo no tiene filas.', true);
     const faltan = ['Rut', 'DV', 'NombreAlumno', 'FechaNac', 'Curso'].filter(k => !Object.keys(filas[0]).some(x => x.replace(/\s/g, '').toLowerCase() === k.replace(/\s/g, '').toLowerCase()));
     const cursos = {}; filas.forEach(f => { const k = f.Curso || f.curso; cursos[k] = (cursos[k] || 0) + 1; });
@@ -1154,7 +1507,11 @@ VISTAS.carga = async (c) => {
 VISTAS.config = async (c) => {
   const k = await api('config');
   c.innerHTML = `<div class="grid g2"><div class="tarjeta"><h3>🏫 Institución</h3>
-      ${[['nombreColegio', 'Nombre del colegio'], ['ciudad', 'Ciudad'], ['unidad', 'Unidad responsable'], ['anio', 'Año del proceso'], ['contactoPrivacidad', 'Correo de contacto para privacidad']].map(x => `<label class="campo"><span>${x[1]}</span><input class="input" data-k="${x[0]}" value="${h(k[x[0]])}"></label>`).join('')}</div>
+      ${[['nombreColegio', 'Nombre del colegio'], ['ciudad', 'Ciudad'], ['unidad', 'Unidad responsable'], ['anio', 'Año del proceso'], ['contactoPrivacidad', 'Correo de contacto para privacidad']].map(x => `<label class="campo"><span>${x[1]}</span><input class="input" data-k="${x[0]}" value="${h(k[x[0]])}"></label>`).join('')}
+      <label class="campo"><span>${ic('enlace', 16)} Enlace de la plataforma (URL de la aplicación web)</span><input class="input" data-k="urlPlataforma" value="${h(k.urlPlataforma)}" placeholder="https://script.google.com/macros/s/…/exec">
+        <small>Dirección del servidor en Apps Script. Si crea una implementación nueva con otra URL, cámbiela aquí y en el index.html de GitHub.</small></label>
+      <label class="campo"><span>${ic('enlace', 16)} Dirección en GitHub Pages (opcional)</span><input class="input" data-k="urlGithub" value="${h(k.urlGithub)}" placeholder="https://usuario.github.io/repositorio/">
+        <small>Si la completa, esa será la dirección para estudiantes y familias, y el enlace de Apps Script los enviará allá. Déjela vacía para seguir usando Apps Script.</small></label></div>
     <div class="tarjeta"><h3>🔒 Privacidad (Ley 21.719)</h3>
       <label class="fila campo"><input type="checkbox" data-k="apoderadoVeRetro" ${k.apoderadoVeRetro === 'true' ? 'checked' : ''}> Las familias ven toda la retroalimentación de su estudiante</label>
       <p class="muted peq">Si está desactivado, solo verán las retroalimentaciones que usted marque como visibles en cada reporte individual.</p>
@@ -1164,19 +1521,35 @@ VISTAS.config = async (c) => {
       <h3 class="mt2">✨ Inteligencia artificial</h3>
       <p class="peq">${k.iaConfigurada ? `<span class="chip ok">Configurada · ${h(k.iaProveedor)}</span>` : '<span class="chip alerta">Sin clave de IA: se usa el motor de reglas del manual (determinista)</span>'}</p>
       <p class="muted peq">La clave se define en <b>Propiedades del script</b> (ANTHROPIC_API_KEY o GEMINI_API_KEY), nunca en el código ni en GitHub.</p></div>
-    <div class="tarjeta"><h3>🖼️ Imágenes institucionales</h3><p class="muted peq">Se guardan en la carpeta privada de Drive. Recomendado: menos de 90 KB cada una.</p>
-      ${[['img_logo', 'Insignia del colegio'], ['img_portada', 'Ilustración de portada (estudiantes)'], ['img_colegio', 'Fotografía del colegio (fondo del ingreso)']].map(x => `<div class="fila entre" style="margin-bottom:12px"><span>${x[1]}</span><label class="btn mini sec">Subir<input type="file" accept="image/*" data-img="${x[0]}" hidden></label></div>`).join('')}</div></div>
+    <div class="tarjeta"><h3>🖼️ Imágenes institucionales</h3><p class="muted peq">Se guardan en la carpeta privada de Drive y se reducen automáticamente para que la página cargue rápido.</p>
+      ${[['img_logo', 'Insignia del colegio'], ['img_portada', 'Ilustración de portada (estudiantes)'], ['img_colegio', 'Fotografía del colegio (fondo del ingreso)']].map(x => `<div class="fila entre" style="margin-bottom:12px"><span>${x[1]}</span><label class="btn mini sec">Subir<input type="file" accept="image/*" data-imgcfg="${x[0]}" hidden></label></div>`).join('')}</div>
+    <div class="tarjeta"><h3>📘 Contenido de los manuales</h3><p class="peq">Carga o actualiza en la plataforma el contenido completo de las guías (bienvenida, sesiones 1 a 7, manual de familias y guía docente) con sus ejercicios y encuestas.</p>
+      <p class="muted peq">Solo se actualizan las sesiones que no han sido editadas. Las respuestas de estudiantes no se borran.</p>
+      <div class="fila"><button class="btn sec mini" id="bContenido">${ic('libro', 15)} Actualizar contenido</button><button class="btn fantasma mini" id="bContenidoF">Reemplazar también las editadas</button></div>
+      <h3 class="mt2">⚡ Velocidad</h3><p class="muted peq">La plataforma guarda una copia rápida de los datos por 30 minutos. Si editó la planilla directamente en Google Sheets, presione aquí para ver los cambios al instante.</p>
+      <button class="btn sec mini" id="bRefrescar">${ic('reloj', 15)} Refrescar datos</button></div></div>
     <button class="btn oro mt" id="bGuardarCfg">Guardar configuración</button>`;
   $('#bGuardarCfg').onclick = async () => {
     const d = {}; $$('[data-k]', c).forEach(x => { d[x.dataset.k] = x.type === 'checkbox' ? String(x.checked) : x.value; });
-    try { await api('guardarConfig', d); E.info = JSON.parse(await gs('infoPublica')); toast('Configuración guardada'); } catch (e) { toast(e.message, true); }
+    try { await api('guardarConfig', d); await cargarInfo(); toast('Configuración guardada'); } catch (e) { toast(e.message, true); }
   };
   $('#bDepurar').onclick = async () => { if (!confirm('Se eliminarán mensajes y registros de auditoría más antiguos que el plazo definido. ¿Continuar?')) return; try { const r = await api('depurar'); toast(`${r.borrados} registros eliminados (anteriores a ${r.limite})`); } catch (e) { toast(e.message, true); } };
-  $$('[data-img]', c).forEach(x => x.onchange = async () => {
+  $$('[data-imgcfg]', c).forEach(x => x.onchange = async () => {
     const f = x.files[0]; if (!f) return;
-    if (f.size > 2 * 1048576) return toast('La imagen supera 2 MB.', true);
-    try { await api('subirImagen', { clave: x.dataset.img, mime: f.type, nombre: f.name, base64: await leerArchivo(f) }); E.info = JSON.parse(await gs('infoPublica')); renderShell(); ir('config'); toast('Imagen actualizada'); } catch (e) { toast(e.message, true); }
+    try {
+      const max = x.dataset.imgcfg === 'img_logo' ? 360 : 900;
+      const img = await comprimirImagen(f, max, x.dataset.imgcfg === 'img_colegio' ? .6 : .82);
+      await api('subirImagen', Object.assign({ clave: x.dataset.imgcfg }, img)); local.del('infoPublica');
+      await cargarInfo(); renderShell(); ir('config'); toast('Imagen actualizada');
+    } catch (e) { toast(e.message, true); }
   });
+  const contenido = async forzar => {
+    if (forzar && !confirm('Se reemplazarán con el texto de los manuales también las sesiones que editó la administración. ¿Continuar?')) return;
+    try { const r = await api('actualizarContenido', { forzar }); toast(`Listo: ${r.sesionesNuevas} sesiones nuevas, ${r.sesionesActualizadas} actualizadas, ${r.cuestionariosNuevos} cuestionarios nuevos`); } catch (e) { toast(e.message, true); }
+  };
+  $('#bContenido').onclick = () => contenido(false);
+  $('#bContenidoF').onclick = () => contenido(true);
+  $('#bRefrescar').onclick = async () => { try { await api('refrescar'); E._cursos = null; toast('Datos actualizados desde la planilla'); } catch (e) { toast(e.message, true); } };
 };
 
 VISTAS.auditoria = async (c) => {
@@ -1192,13 +1565,18 @@ VISTAS.auditoria = async (c) => {
  * ===================================================================== */
 (async function iniciar() {
   const tema = local.pget('tema', null); if (tema) document.documentElement.dataset.theme = tema;
-  $('#app').innerHTML = cargando('Preparando tu bitácora…');
-  try { E.info = JSON.parse(await gs('infoPublica')); } catch (e) { E.info = {}; }
   const t = local.get('token', null);
+  // Velocidad: la portada se dibuja al instante con la información guardada de la visita anterior,
+  // mientras se consulta al servidor (información pública y perfil, en paralelo).
+  const guardada = local.pget('infoPublica', null);
+  if (guardada) { E.info = guardada; if (!t) pantallaLogin(); }
+  if (!guardada || t) $('#app').innerHTML = cargando('Preparando tu bitácora…');
+  const pInfo = cargarInfo().then(() => { if (!E.info.sinConexion) { const g = Object.assign({}, E.info); local.pset('infoPublica', g); } });
   if (t) {
     E.token = t;
-    try { E.perfil = await api('perfil'); return postLogin(); } catch (e) { E.token = null; local.del('token'); }
+    try { const [perfil] = await Promise.all([api('perfil'), pInfo]); E.perfil = perfil; return postLogin(); } catch (e) { E.token = null; local.del('token'); }
   }
-  pantallaLogin();
+  await pInfo;
+  if (!E.token && (!guardada || E.info.sinConexion || JSON.stringify(guardada.imagenes) !== JSON.stringify(E.info.imagenes))) pantallaLogin(E.info.sinConexion || '');
 })();
 </script>

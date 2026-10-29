@@ -5,9 +5,13 @@
  * por la propiedad de script SPREADSHEET_ID (ver README).
  */
 
+// Las columnas nuevas siempre se agregan AL FINAL para no desordenar datos existentes.
 var ESQUEMA = {
   Usuarios: ['id', 'rut', 'tipo', 'nombre', 'rol', 'cursos', 'estudianteRut', 'parentesco', 'email',
-    'salt', 'hash', 'activo', 'debeCambiar', 'consentimiento', 'creado', 'ultimoAcceso'],
+    'salt', 'hash', 'activo', 'debeCambiar', 'consentimiento', 'creado', 'ultimoAcceso', 'perfilId'],
+  Cursos: ['curso', 'nivel', 'descripcion', 'profesorJefe', 'activo', 'creado'],
+  Perfiles: ['id', 'nombre', 'base', 'permisos', 'sistema', 'actualizado'],
+  Trabajos: ['id', 'sesionId', 'bloqueId', 'usuarioId', 'estudianteRut', 'curso', 'texto', 'campos', 'imagen', 'fecha'],
   Estudiantes: ['rut', 'dv', 'nombre', 'sexo', 'fechaNac', 'curso', 'local', 'fecMatricula',
     'direccion', 'comuna', 'nombrePadre', 'nombreMadre', 'nombreTutor', 'actualizado'],
   Sesiones: ['id', 'baseId', 'numero', 'titulo', 'objetivo', 'audiencia', 'cursos', 'estado',
@@ -17,7 +21,7 @@ var ESQUEMA = {
   Cuestionarios: ['id', 'codigo', 'titulo', 'descripcion', 'audiencia', 'sesionId', 'preguntas',
     'habilitado', 'cursos', 'actualizado'],
   Respuestas: ['id', 'cuestionarioId', 'codigo', 'usuarioId', 'estudianteRut', 'curso', 'respuestas',
-    'puntajes', 'fecha'],
+    'puntajes', 'fecha', 'origen'],
   Mensajes: ['id', 'hilo', 'deId', 'deNombre', 'deRol', 'paraTipo', 'curso', 'estudianteRut',
     'texto', 'fecha', 'leidoPor', 'likes'],
   Retroalimentacion: ['id', 'estudianteRut', 'autorId', 'autorNombre', 'texto', 'visibleApoderado', 'fecha'],
@@ -36,22 +40,86 @@ function ss_() {
   return _ssCache;
 }
 
+var _hojas = {};
 function hoja_(nombre) {
+  if (_hojas[nombre]) return _hojas[nombre];
+  var cols = ESQUEMA[nombre].length;
   var sh = ss_().getSheetByName(nombre);
   if (!sh) {
     sh = ss_().insertSheet(nombre);
     // Todo como texto plano: evita que Sheets convierta RUT o fechas por su cuenta.
-    sh.getRange(1, 1, sh.getMaxRows(), ESQUEMA[nombre].length).setNumberFormat('@');
-    sh.getRange(1, 1, 1, ESQUEMA[nombre].length).setValues([ESQUEMA[nombre]]).setFontWeight('bold');
+    sh.getRange(1, 1, sh.getMaxRows(), cols).setNumberFormat('@');
+    sh.getRange(1, 1, 1, cols).setValues([ESQUEMA[nombre]]).setFontWeight('bold');
     sh.setFrozenRows(1);
+  } else if (sh.getLastColumn() < cols) {
+    // Actualización de versión: agrega los encabezados de las columnas nuevas.
+    sh.getRange(1, 1, sh.getMaxRows(), cols).setNumberFormat('@');
+    sh.getRange(1, 1, 1, cols).setValues([ESQUEMA[nombre]]).setFontWeight('bold');
   }
+  _hojas[nombre] = sh;
   return sh;
 }
 
-/** Lee todas las filas de una hoja como objetos. Memoriza por ejecución. */
+/* ---------- Caché entre ejecuciones (velocidad) ----------
+ * Cada hoja se guarda en CacheService con un número de versión. Toda escritura
+ * cambia la versión, así nadie lee datos viejos. Si edita la planilla a mano,
+ * use Configuración > "Refrescar datos". */
+var DURACION_CACHE = 1800; // 30 minutos
+var TROZO = 40000;         // caracteres por trozo (límite de 100 KB por valor)
+var SIN_CACHE = { Auditoria: true };
+
+function versionHoja_(nombre) {
+  var c = CacheService.getScriptCache();
+  var v = c.get('V_' + nombre);
+  if (!v) { v = String(Date.now()); c.put('V_' + nombre, v, DURACION_CACHE); }
+  return v;
+}
+
+function invalidarCache_(nombre) {
+  try { CacheService.getScriptCache().put('V_' + nombre, String(Date.now()) + Math.floor(Math.random() * 1000), DURACION_CACHE); } catch (e) {}
+}
+
+function refrescarDatos_(ses) {
+  Object.keys(ESQUEMA).forEach(invalidarCache_);
+  CacheService.getScriptCache().remove('INFO_PUBLICA');
+  auditar_(ses, 'refrescar_datos', '');
+  return { ok: true };
+}
+
+function leerCache_(nombre, v) {
+  try {
+    var c = CacheService.getScriptCache();
+    var n = Number(c.get('T_' + nombre + '_' + v + '_n') || 0);
+    if (!n) return null;
+    var claves = [];
+    for (var i = 0; i < n; i++) claves.push('T_' + nombre + '_' + v + '_' + i);
+    var partes = c.getAll(claves), s = '';
+    for (var j = 0; j < n; j++) { if (partes[claves[j]] === undefined) return null; s += partes[claves[j]]; }
+    return JSON.parse(s);
+  } catch (e) { return null; }
+}
+
+function guardarCache_(nombre, v, filas) {
+  try {
+    var s = JSON.stringify(filas);
+    if (s.length > TROZO * 60) return; // hojas muy grandes: se leen directo
+    var c = CacheService.getScriptCache(), mapa = {}, n = 0;
+    for (var i = 0; i < s.length; i += TROZO) { mapa['T_' + nombre + '_' + v + '_' + n] = s.slice(i, i + TROZO); n++; }
+    mapa['T_' + nombre + '_' + v + '_n'] = String(n || 1);
+    if (!n) mapa['T_' + nombre + '_' + v + '_0'] = '[]';
+    c.putAll(mapa, DURACION_CACHE);
+  } catch (e) { /* si la caché falla, se sigue leyendo la planilla */ }
+}
+
+/** Lee todas las filas de una hoja como objetos. Memoriza por ejecución y en caché. */
 var _memo = {};
 function todos_(nombre) {
   if (_memo[nombre]) return _memo[nombre];
+  var ver = SIN_CACHE[nombre] ? '' : versionHoja_(nombre);
+  if (ver) {
+    var enCache = leerCache_(nombre, ver);
+    if (enCache) { _memo[nombre] = enCache; return enCache; }
+  }
   var sh = hoja_(nombre);
   var cols = ESQUEMA[nombre];
   var n = sh.getLastRow() - 1;
@@ -68,10 +136,15 @@ function todos_(nombre) {
     }
   }
   _memo[nombre] = filas;
+  if (ver) guardarCache_(nombre, ver, filas);
   return filas;
 }
 
-function limpiarMemo_(nombre) { if (nombre) delete _memo[nombre]; else _memo = {}; }
+/** Se llama después de cada escritura: descarta la memoria y la caché de esa hoja. */
+function limpiarMemo_(nombre) {
+  if (nombre) { delete _memo[nombre]; if (!SIN_CACHE[nombre]) invalidarCache_(nombre); }
+  else { _memo = {}; Object.keys(ESQUEMA).forEach(invalidarCache_); }
+}
 
 function filaDesdeObj_(nombre, o) {
   return ESQUEMA[nombre].map(function (c) {
@@ -139,6 +212,11 @@ var CONFIG_DEFECTO = {
   iaIncluirAbiertas: 'true',
   retencionMeses: '24',
   contactoPrivacidad: 'utp@colegio.cl',
+  // Enlace público de la aplicación web (se cambia desde Configuración en la plataforma).
+  urlPlataforma: 'https://script.google.com/macros/s/AKfycbwL47EUXV9RSNDJFbRrsVPZmcQr0nUvQqzcx-9ZlFzfxudH-VUMgy9hbWGttsKpAFIq/exec',
+  // Dirección de GitHub Pages donde se usa la plataforma. Si se completa, el enlace
+  // de Apps Script redirige allá. Vacío = la plataforma también se abre en Apps Script.
+  urlGithub: '',
   img_logo: '',
   img_portada: '',
   img_colegio: ''
