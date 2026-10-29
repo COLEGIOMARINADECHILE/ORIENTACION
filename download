@@ -1,0 +1,24 @@
+# Configuración local de clasp: contiene el ID de SU proyecto de Apps Script
+.clasp.json
+.clasprc.json
+
+# Nunca suba datos personales de estudiantes o familias (Ley 21.719)
+datos/
+*.xlsx
+*.xls
+*.csv
+!plantillas/*.csv
+*.json.bak
+respaldo*/
+exportaciones/
+
+# Configuración local del editor
+.claude/
+
+# Vista previa local generada
+dev/preview.html
+
+# Sistema
+.DS_Store
+Thumbs.db
+node_modules/

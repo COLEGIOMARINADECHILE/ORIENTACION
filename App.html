@@ -1,0 +1,1204 @@
+<script>
+/* =====================================================================
+ * Mi Proyecto de Vida · Colegio Marina de Chile
+ * Aplicación de una sola página servida por Google Apps Script.
+ * Toda la información se pide al servidor con un token de sesión;
+ * los permisos se validan SIEMPRE en el servidor (Code.gs → api()).
+ * ===================================================================== */
+
+const E = { token: null, perfil: null, info: {}, vista: 'inicio', params: {}, graficos: [], cursoSel: '' };
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const h = s => String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const COLORES = ['#0b2a66', '#e3b505', '#c8553d', '#1f9e8f', '#6c4ab6', '#0f4c9c'];
+const EMOJI = { brujula: '🧭', estrella: '⭐', lupa: '🔎', balanza: '⚖️', bandera: '🚩', camino: '🛤️', familia: '🏡', guia: '📘' };
+const ROL_TXT = { admin: 'Administrador/a', docente: 'Docente', asistente: 'Asistente de la educación', estudiante: 'Estudiante', apoderado: 'Apoderado/a' };
+const BLOQUE = { texto: ['📄', 'Contenido', 'libro'], caso: ['🧑‍🎓', 'Experiencia de vida', 'grupo'], psicologia: ['🧠', 'Lo que dice la psicología', 'ampolleta'], ejercicio: ['✏️', 'Ejercicio', 'lapiz'], recuerde: ['📌', 'Recuerda', 'chincheta'], enlace: ['🔗', 'Enlace', 'enlace'], video: ['🎬', 'Video', 'video'], imagen: ['🖼️', 'Imagen', 'imagen'] };
+const DIM = [['claridad', 'Claridad del proyecto'], ['conocimiento', 'Conocimiento de opciones'], ['autonomia', 'Autonomía'], ['certeza', 'Certeza y plan']];
+const RIASEC_T = { R: 'Realista', I: 'Investigador', A: 'Artístico', S: 'Social', E: 'Emprendedor', C: 'Convencional' };
+
+/* ---------- Almacenamiento local (solo conveniencias, nunca datos personales) ---------- */
+const local = {
+  get(k, d) { try { const v = sessionStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  del(k) { try { sessionStorage.removeItem(k); } catch (e) {} },
+  pget(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  pset(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+};
+
+/* ---------- Comunicación con el servidor ---------- */
+function gs(fn, ...args) {
+  return new Promise((res, rej) => {
+    google.script.run.withSuccessHandler(res).withFailureHandler(e => rej(new Error(e && e.message || 'Error de conexión')))[fn](...args);
+  });
+}
+async function api(accion, datos) {
+  const raw = await gs('api', { token: E.token, accion, datos: datos || {} });
+  const r = JSON.parse(raw);
+  if (!r.ok) {
+    if (r.expirada) { salir(true); throw new Error('Tu sesión expiró. Ingresa nuevamente.'); }
+    throw new Error(r.error);
+  }
+  return r.data;
+}
+
+/* ---------- Utilidades de interfaz ---------- */
+function toast(msg, error) {
+  const t = $('#toast'); t.textContent = msg; t.className = 'toast' + (error ? ' error' : ''); t.hidden = false;
+  clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; }, error ? 5200 : 3000);
+}
+function modal(html, ancho) {
+  const m = $('#modal');
+  m.innerHTML = `<div class="modal-caja ${ancho ? 'ancho' : ''}" role="dialog" aria-modal="true"><button class="cerrar" aria-label="Cerrar" data-cerrar>✕</button>${html}</div>`;
+  m.hidden = false;
+  m.onclick = e => { if (e.target === m || e.target.closest('[data-cerrar]')) cerrarModal(); };
+  const f = $('input, textarea, select, button.btn', m); if (f) setTimeout(() => f.focus(), 30);
+  return $('.modal-caja', m);
+}
+function cerrarModal() { const m = $('#modal'); m.hidden = true; m.innerHTML = ''; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal').hidden) cerrarModal(); });
+const cargando = (txt) => `<div class="cargando"><div class="spin"></div>${h(txt || 'Cargando…')}</div>`;
+const vacio = (ico, txt) => `<div class="vacio"><span class="ico burbuja-ico">${ico}</span>${txt}</div>`;
+function iniciales(n) { return String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0]).join('').toUpperCase(); }
+function fecha(f) {
+  if (!f) return '';
+  const d = new Date(String(f).replace(' ', 'T'));
+  if (isNaN(d)) return f;
+  const hoy = new Date(); const mismo = d.toDateString() === hoy.toDateString();
+  return mismo ? d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('es-CL', { day: 'numeric', month: 'short', year: d.getFullYear() === hoy.getFullYear() ? undefined : 'numeric' });
+}
+function nivelCls(v) { return v === null || v === undefined ? '' : 'n' + (v >= 3.5 ? 4 : v >= 3 ? 3 : v >= 2 ? 2 : 1); }
+function nivelTag(v) { return v === null || v === undefined ? '<span class="muted">—</span>' : `<span class="nivel ${nivelCls(v)}">${Number(v).toFixed(1)}</span>`; }
+function formatoRut(v) {
+  const l = String(v).replace(/[^0-9kK]/g, '').toUpperCase(); if (l.length < 2) return l;
+  const c = l.slice(0, -1), d = l.slice(-1);
+  return c.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + d;
+}
+function descargar(nombre, contenido, mime) {
+  const blob = contenido instanceof Blob ? contenido : new Blob([contenido], { type: mime || 'text/plain;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 800);
+}
+function csv(filas) {
+  const esc = v => { const s = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  return '﻿' + filas.map(f => f.map(esc).join(';')).join('\n');
+}
+function valorTxt(v) {
+  if (v === undefined || v === null || v === '') return '—';
+  if (Array.isArray(v)) return v.join(', ');
+  if (typeof v === 'object') return Object.keys(v).map(k => k + ': ' + v[k]).join(' · ');
+  return String(v);
+}
+function imprimir(nodo, titulo) {
+  const clon = nodo.cloneNode(true);
+  const orig = $$('canvas', nodo), copias = $$('canvas', clon);
+  copias.forEach((c, i) => { const img = document.createElement('img'); img.src = orig[i].toDataURL('image/png'); img.style.maxWidth = '100%'; c.replaceWith(img); });
+  $$('.no-print', clon).forEach(x => x.remove());
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permite las ventanas emergentes para imprimir o guardar en PDF.', true); return; }
+  const estilos = $$('style').map(s => s.outerHTML).join('');
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${h(titulo)}</title>${estilos}<style>body{background:#fff;padding:24px}.tarjeta{box-shadow:none}</style></head><body data-theme="light">
+    <div class="fila" style="border-bottom:3px solid #e3b505;padding-bottom:10px;margin-bottom:16px">${logoHTML(42)}<div><b>${h(E.info.colegio)}</b><br><span class="muted peq">${h(E.info.unidad)} · Documento confidencial (Ley 21.719)</span></div></div>
+    <h1>${h(titulo)}</h1><p class="muted peq">Generado el ${new Date().toLocaleString('es-CL')} por ${h(E.perfil.nombre)}</p>${clon.innerHTML}</body></html>`);
+  w.document.close(); setTimeout(() => w.print(), 600);
+}
+function graficar(canvas, cfg) {
+  if (!window.Chart || !canvas) return;
+  Chart.defaults.font.family = "'Plus Jakarta Sans', system-ui, sans-serif";
+  Chart.defaults.color = getComputedStyle(document.body).getPropertyValue('--tinta-2').trim() || '#4a5470';
+  cfg.options = Object.assign({ responsive: true, maintainAspectRatio: false, animation: { duration: 500 } }, cfg.options || {});
+  E.graficos.push(new Chart(canvas, cfg));
+}
+function limpiarGraficos() { E.graficos.forEach(g => { try { g.destroy(); } catch (e) {} }); E.graficos = []; }
+function leerArchivo(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
+}
+function opcionesCursos(cursos, sel) {
+  return cursos.map(c => `<option ${c.curso === sel ? 'selected' : ''} value="${h(c.curso)}">${h(c.curso)} (${c.estudiantes})</option>`).join('');
+}
+async function misCursos() { if (!E._cursos) E._cursos = await api('cursos'); return E._cursos; }
+
+/* ---------- Logos e ilustraciones ---------- */
+function logoHTML(alto) {
+  if (E.info.imagenes && E.info.imagenes.logo) return `<img src="${h(E.info.imagenes.logo)}" alt="Insignia ${h(E.info.colegio)}" style="height:${alto || 70}px;width:auto">`;
+  return `<svg viewBox="0 0 100 120" style="height:${alto || 70}px;width:auto" role="img" aria-label="Insignia del colegio"><path d="M6 6h88v62c0 26-20 40-44 48C26 108 6 94 6 68z" fill="#0b4aa0" stroke="#e3b505" stroke-width="5"/>
+    <text x="50" y="26" fill="#e3b505" font-size="11" font-family="Georgia" text-anchor="middle" font-weight="700">COLEGIO</text>${timonSVG(50, 64, 22, '#dfe8f7')}
+    <text x="50" y="104" fill="#e3b505" font-size="7" font-family="Georgia" text-anchor="middle">CONCEPCIÓN</text></svg>`;
+}
+function timonSVG(cx, cy, r, color) {
+  let s = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${r / 6}"/><circle cx="${cx}" cy="${cy}" r="${r / 4}" fill="${color}"/>`;
+  for (let i = 0; i < 8; i++) {
+    const a = i * Math.PI / 4, x2 = cx + Math.cos(a) * r * 1.45, y2 = cy + Math.sin(a) * r * 1.45;
+    s += `<line x1="${cx}" y1="${cy}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${color}" stroke-width="${r / 8}" stroke-linecap="round"/>`;
+  }
+  return s;
+}
+function ilustracion() {
+  if (E.info.imagenes && E.info.imagenes.portada) return `<img class="hero-ilus" src="${h(E.info.imagenes.portada)}" alt="Estudiantes del colegio con su proyecto de vida">`;
+  return `<svg class="hero-ilus" viewBox="0 0 400 300" aria-hidden="true"><defs><linearGradient id="g1" x1="0" x2="1"><stop offset="0" stop-color="#f4d35e"/><stop offset="1" stop-color="#e3b505"/></linearGradient></defs>
+    <circle cx="200" cy="150" r="118" fill="rgba(255,255,255,.06)"/>${timonSVG(200, 150, 70, 'url(#g1)')}
+    <path d="M60 250 q40-30 80 0 t80 0 t80 0 t80 0" stroke="#fff" stroke-opacity=".5" stroke-width="4" fill="none"/>
+    <path d="M200 40 l10 26 -10 -6 -10 6z" fill="#c8553d"/></svg>`;
+}
+function confeti() {
+  const col = ['#e3b505', '#c8553d', '#1f9e8f', '#6c4ab6', '#0f4c9c', '#f3a08a'];
+  return `<div class="confeti" aria-hidden="true">${Array.from({ length: 36 }, (_, i) => `<i style="left:${(i * 37) % 100}%;background:${col[i % col.length]};animation-delay:${(i % 9) * .12}s;transform:rotate(${i * 23}deg)"></i>`).join('')}</div>`;
+}
+const timonFondo =`<svg class="timon" viewBox="0 0 100 100" aria-hidden="true">${timonSVG(50, 50, 30, '#fff')}</svg>`;
+
+/* =====================================================================
+ * INGRESO
+ * ===================================================================== */
+const PERFILES = [
+  ['estudiante', 'mochila', 'Estudiante', '#e3b505'], ['madre', 'mujer', 'Madre', '#c8553d'], ['padre', 'hombre', 'Padre', '#0f4c9c'],
+  ['tutor', 'manos', 'Tutor/a', '#1f9e8f'], ['personal', 'colegio', 'Equipo', '#6c4ab6']
+];
+function pantallaLogin(msg) {
+  limpiarGraficos();
+  const tipo = local.pget('ultimoPerfil', 'estudiante');
+  const foto = E.info.imagenes && E.info.imagenes.colegio ? `<div class="foto" style="background-image:url('${h(E.info.imagenes.colegio)}')"></div>` : '';
+  $('#app').innerHTML = `
+  <main class="login">
+    <section class="login-hero">${foto}
+      <div class="marca">${logoHTML(70)}<div><b>${h(E.info.colegio || 'Colegio Marina de Chile')}</b><span>${h(E.info.ciudad || 'Concepción')} · Orientación ${h(E.info.anio || '')}</span></div></div>
+      <div>
+        <h1 class="hero-titulo">Mi proyecto de <em>vida</em></h1>
+        <p class="hero-sub">Tu bitácora para pensar quién eres, explorar tus opciones y decidir con autonomía tu próximo paso en la enseñanza media, junto a tu familia y al equipo del colegio.</p>
+        <div class="hero-chips">${[['brujula', '5 sesiones'], ['chispa', 'Tu perfil de intereses'], ['medalla', 'Insignias'], ['chat', 'Chat con tu equipo']].map(x => `<span>${ic(x[0], 16)} ${x[1]}</span>`).join('')}</div>
+      </div>
+      ${ilustracion()}
+      <svg class="olas" viewBox="0 0 1200 120" preserveAspectRatio="none" aria-hidden="true"><path d="M0 60 Q150 10 300 60 T600 60 T900 60 T1200 60 V120 H0z" fill="#0f4c9c"/><path d="M0 80 Q150 40 300 80 T600 80 T900 80 T1200 80 V120 H0z" fill="#071b44"/></svg>
+    </section>
+    <section class="login-form">
+      <form class="tarjeta-login" id="fLogin" autocomplete="on" novalidate>
+        <h2>Bienvenida, bienvenido</h2>
+        <p class="muted">Elige tu perfil e ingresa con el RUT del estudiante.</p>
+        <div class="perfiles" role="group" aria-label="Perfil de ingreso">
+          ${PERFILES.map(p => `<button type="button" class="perfil-op" data-tipo="${p[0]}" aria-pressed="${p[0] === tipo}" style="--c:${p[3]}"><span class="ico">${ic(p[1], 22)}</span>${p[2]}</button>`).join('')}
+        </div>
+        <label class="campo"><span id="lblRut">RUT del estudiante</span><input class="input" id="rut" inputmode="text" autocomplete="username" placeholder="12.345.678-9" required></label>
+        <label class="campo"><span>Clave</span><input class="input" id="clave" type="password" autocomplete="current-password" required>
+          <small id="ayudaClave">La primera vez, tu clave es la fecha de nacimiento del estudiante: DDMMAAAA (ej. 05032012).</small></label>
+        <button class="btn oro bloque" id="bIngresar">Ingresar</button>
+        <p class="err" id="errLogin">${h(msg || '')}</p>
+        <p class="aviso-priv">🔒 Tus datos personales se tratan de forma confidencial según la Ley 21.719. <a href="#" id="lnkPriv">Ver aviso de privacidad</a>.</p>
+      </form>
+    </section>
+  </main>`;
+  let sel = tipo;
+  const ajustar = () => {
+    $('#lblRut').textContent = sel === 'personal' ? 'Tu RUT' : 'RUT del estudiante';
+    $('#ayudaClave').textContent = sel === 'personal' ? 'Usa la clave que te entregó el administrador.' :
+      'La primera vez, la clave es la fecha de nacimiento del estudiante: DDMMAAAA (ej. 05032012). Cada perfil tiene su propia clave.';
+  };
+  ajustar();
+  $$('.perfil-op').forEach(b => b.onclick = () => { sel = b.dataset.tipo; $$('.perfil-op').forEach(x => x.setAttribute('aria-pressed', x === b)); ajustar(); });
+  $('#rut').addEventListener('blur', e => { e.target.value = formatoRut(e.target.value); });
+  $('#lnkPriv').onclick = e => { e.preventDefault(); verPrivacidad(false); };
+  $('#fLogin').onsubmit = async e => {
+    e.preventDefault();
+    const b = $('#bIngresar'); b.disabled = true; b.textContent = 'Verificando…'; $('#errLogin').textContent = '';
+    try {
+      const r = await gs('login', $('#rut').value, $('#clave').value, sel);
+      if (!r.ok) throw new Error(r.error);
+      local.pset('ultimoPerfil', sel);
+      E.token = r.token; E.perfil = r.perfil; local.set('token', r.token);
+      await postLogin();
+    } catch (err) { $('#errLogin').textContent = err.message; b.disabled = false; b.textContent = 'Ingresar'; }
+  };
+}
+
+async function postLogin() {
+  if (!E.perfil.consentimiento) { verPrivacidad(true); return; }
+  if (E.perfil.debeCambiar && ['admin', 'docente', 'asistente'].includes(E.perfil.rol)) { renderShell(); ir('cuenta'); cambiarClaveModal(true); return; }
+  renderShell(); ir(local.get('vista', 'inicio'));
+}
+
+function textoPrivacidad() {
+  return `<h2>Aviso de privacidad</h2>
+  <p><b>Responsable:</b> ${h(E.info.colegio || 'Colegio Marina de Chile')}, ${h(E.info.ciudad || 'Concepción')}. Contacto: <a href="mailto:${h(E.info.contactoPrivacidad)}">${h(E.info.contactoPrivacidad)}</a>.</p>
+  <p><b>Finalidad:</b> acompañar el proceso de orientación y proyecto de vida de los estudiantes: sesiones, cuestionarios, retroalimentación, comunicación con las familias y análisis pedagógico. Los datos no se usan para otros fines, no se venden ni se publican.</p>
+  <p><b>Datos tratados:</b> identificación (RUT, nombre, curso, fecha de nacimiento), respuestas a cuestionarios, mensajes y retroalimentación. Por tratarse de niños, niñas y adolescentes, prima su interés superior.</p>
+  <p><b>Quién accede:</b> solo el equipo del colegio asignado al curso (profesores, asistentes, orientación y UTP). Las familias ven el material para familias, sus propias respuestas y, si el colegio lo autoriza, la retroalimentación de su hijo o hija.</p>
+  <p><b>Análisis con IA:</b> cuando se usa, se envían datos seudonimizados (sin nombre ni RUT) a un proveedor que actúa como encargado del tratamiento. Los análisis orientan; no clasifican ni reemplazan el criterio profesional.</p>
+  <p><b>Conservación:</b> los registros se conservan por ${h(E.info.retencionMeses || 24)} meses o hasta el término del proceso, salvo obligación legal.</p>
+  <p><b>Sus derechos:</b> acceso, rectificación, supresión, oposición, portabilidad y bloqueo. Puede descargar sus datos en "Mi cuenta" o escribir al contacto indicado.</p>
+  <p><b>Seguridad:</b> claves cifradas, sesiones con expiración, acceso por rol y registro de auditoría.</p>`;
+}
+function verPrivacidad(aceptar) {
+  const c = modal(textoPrivacidad() + (aceptar ? `<div class="fila mt"><button class="btn oro" id="bAcepto">He leído y acepto</button><button class="btn fantasma" id="bNo">Salir</button></div>` : ''));
+  if (aceptar) {
+    $('#modal').onclick = null; $('.cerrar', c).remove();
+    $('#bAcepto').onclick = async () => { try { await api('aceptarPrivacidad'); E.perfil.consentimiento = true; cerrarModal(); postLogin(); } catch (e) { toast(e.message, true); } };
+    $('#bNo').onclick = () => { cerrarModal(); salir(); };
+  }
+}
+
+async function salir(expirada) {
+  if (E.token && !expirada) { try { await gs('logout', E.token); } catch (e) {} }
+  E.token = null; E.perfil = null; E._cursos = null; local.del('token'); local.del('vista');
+  cerrarModal(); pantallaLogin(expirada ? 'Tu sesión expiró. Ingresa nuevamente.' : '');
+}
+
+/* =====================================================================
+ * ESTRUCTURA Y NAVEGACIÓN
+ * ===================================================================== */
+function menu() {
+  const r = E.perfil.rol;
+  if (r === 'estudiante') return [['inicio', 'inicio', 'Inicio'], ['sesiones', 'brujula', 'Sesiones'], ['cuestionarios', 'tarea', 'Cuestionarios'], ['resultados', 'grafico', 'Mis resultados'], ['mensajes', 'chat', 'Mensajes'], ['cuenta', 'usuario', 'Mi cuenta']];
+  if (r === 'apoderado') return [['inicio', 'inicio', 'Inicio'], ['sesiones', 'libro', 'Manual familias'], ['cuestionarios', 'tarea', 'Encuestas'], ['resultados', 'grafico', 'Resultados'], ['mensajes', 'chat', 'Mensajes'], ['cuenta', 'usuario', 'Mi cuenta']];
+  const m = [['inicio', 'inicio', 'Panel'], ['cursos', 'grupo', 'Mis cursos'], ['sesiones', 'brujula', 'Sesiones'], ['materiales', 'clip', 'Materiales'], ['cuestionarios', 'tarea', 'Cuestionarios'],
+    ['reportes', 'tendencia', 'Reportes'], ['analisis', 'chispa', 'Análisis IA'], ['mensajes', 'chat', 'Mensajes']];
+  if (r === 'admin') m.push(['sep', '', 'Administración'], ['usuarios', 'credencial', 'Usuarios'], ['carga', 'subir', 'Carga masiva'], ['config', 'ajustes', 'Configuración'], ['auditoria', 'escudo', 'Auditoría']);
+  m.push(['cuenta', 'usuario', 'Mi cuenta']);
+  return m;
+}
+function renderShell() {
+  const p = E.perfil;
+  const items = menu();
+  $('#app').innerHTML = `
+  <div class="shell">
+    <aside class="lateral">
+      <div class="marca">${logoHTML(48)}<div><b>Mi Proyecto de Vida</b><span>${h(E.info.colegio)}</span></div></div>
+      <nav class="nav" aria-label="Menú principal">
+        ${items.map(i => i[0] === 'sep' ? `<div class="nav-sep">${i[2]}</div>` : `<button data-v="${i[0]}"><span class="ico">${ic(i[1], 19)}</span>${i[2]}${i[0] === 'mensajes' ? '<span class="badge oculto" data-badge></span>' : ''}</button>`).join('')}
+      </nav>
+      <div class="pie"><div class="pie-tarjeta"><div class="avatar">${h(iniciales(p.nombre))}</div><div><b>${h(p.nombre.split(' ').slice(0, 2).join(' '))}</b><span>${h(ROL_TXT[p.rol])}${p.estudianteNombre && p.rol === 'apoderado' ? ' de ' + h(p.estudianteNombre.split(' ')[0]) : ''}${p.cursos.length ? ' · ' + h(p.cursos.join(', ')) : ''}</span></div></div></div>
+      <svg class="lateral-timon" viewBox="0 0 100 100" aria-hidden="true">${timonSVG(50, 50, 30, '#fff')}</svg>
+    </aside>
+    <div class="principal">
+      <header class="barra"><h2 id="tituloVista"></h2>
+        <button class="btn fantasma mini" id="bTema" title="Cambiar tema" aria-label="Cambiar tema">${ic('luna', 18)}</button>
+        <div class="avatar" title="${h(p.nombre)}">${h(iniciales(p.nombre))}</div>
+        <button class="btn sec mini" id="bSalir">${ic('salir', 16)} Salir</button></header>
+      <main class="contenido" id="contenido"></main>
+    </div>
+  </div>
+  <nav class="nav-movil" aria-label="Menú">
+    ${items.filter(i => i[0] !== 'sep').slice(0, p.rol === 'estudiante' || p.rol === 'apoderado' ? 6 : 5).map(i => `<button data-v="${i[0]}"><span class="ico">${ic(i[1], 22)}</span>${(w => w[0].toUpperCase() + w.slice(1))(i[2].split(' ')[/^Mis? /.test(i[2]) ? 1 : 0])}${i[0] === 'mensajes' ? '<span class="badge oculto" data-badge></span>' : ''}</button>`).join('')}
+    ${p.rol !== 'estudiante' && p.rol !== 'apoderado' ? `<button data-mas><span class="ico">${ic('menu', 22)}</span>Más</button>` : ''}
+  </nav>`;
+  $$('[data-v]').forEach(b => b.onclick = () => ir(b.dataset.v));
+  const mas = $('[data-mas]');
+  if (mas) mas.onclick = () => { const c = modal(`<h3>Menú</h3><div class="nav" style="color:var(--tinta)">${items.filter(i => i[0] !== 'sep').map(i => `<button data-ir="${i[0]}"><span class="ico">${ic(i[1], 19)}</span>${i[2]}</button>`).join('')}</div>`); $$('[data-ir]', c).forEach(b => b.onclick = () => { cerrarModal(); ir(b.dataset.ir); }); };
+  $('#bSalir').onclick = () => salir();
+  $('#bTema').onclick = () => { const act = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = act; local.pset('tema', act); };
+  actualizarBadge();
+}
+async function actualizarBadge() {
+  try {
+    const hs = await api('hilos'); const n = hs.reduce((a, x) => a + (x.noLeidos || 0), 0);
+    $$('[data-badge]').forEach(b => { b.textContent = n; b.classList.toggle('oculto', !n); });
+  } catch (e) {}
+}
+
+const VISTAS = {};
+async function ir(v, params) {
+  if (!VISTAS[v]) v = 'inicio';
+  if (!menu().some(m => m[0] === v) && !['sesion', 'responder', 'estudiante'].includes(v)) v = 'inicio';
+  E.vista = v; E.params = params || {}; local.set('vista', ['sesion', 'responder', 'estudiante'].includes(v) ? 'inicio' : v);
+  limpiarGraficos();
+  $$('[data-v]').forEach(b => b.classList.toggle('activo', b.dataset.v === v || (v === 'sesion' && b.dataset.v === 'sesiones') || (v === 'responder' && b.dataset.v === 'cuestionarios') || (v === 'estudiante' && b.dataset.v === 'cursos')));
+  const item = menu().find(m => m[0] === v);
+  $('#tituloVista').textContent = item ? item[2] : '';
+  const c = $('#contenido'); c.innerHTML = cargando(); window.scrollTo(0, 0);
+  try { await VISTAS[v](c, E.params); }
+  catch (e) { c.innerHTML = vacio('⚠️', h(e.message)); }
+}
+const esPersonal = () => ['admin', 'docente', 'asistente'].includes(E.perfil.rol);
+
+/* =====================================================================
+ * INICIO
+ * ===================================================================== */
+VISTAS.inicio = async (c) => {
+  const d = await api('inicio');
+  const p = E.perfil, nombre = p.nombre.split(' ')[0];
+  const saludo = (() => { const hr = new Date().getHours(); return hr < 12 ? 'Buenos días' : hr < 20 ? 'Buenas tardes' : 'Buenas noches'; })();
+  const hero = (txt, extra, foto) => `<section class="hola ${foto ? 'con-foto' : ''}">${foto ? `<div class="hola-foto" style="background-image:url('${h(foto)}')"></div>` : ''}${timonFondo}
+      <span class="burbuja-deco b1"></span><span class="burbuja-deco b2"></span>
+      <div class="hola-txt"><span class="chip oro">${h(ROL_TXT[p.rol])}${p.cursos.length ? ' · ' + h(p.cursos.join(', ')) : ''}</span>
+      <p class="saludo">${saludo},</p><h1>${h(nombre)} <span class="ola-mano" aria-hidden="true">👋</span></h1><p>${txt}</p>${extra || ''}</div>
+      ${E.info.imagenes && E.info.imagenes.portada && !foto ? `<img class="ilus" src="${h(E.info.imagenes.portada)}" alt="">` : ''}</section>`;
+  if (!esPersonal()) {
+    const sesiones = await api('sesiones');
+    const vistas = local.pget('sesVistas', []);
+    const cs = await api('cuestionarios');
+    const pend = cs.filter(x => !x.respondido);
+    const est = p.rol === 'estudiante';
+    const hechos = sesiones.filter(s => vistas.includes(s.id)).length + cs.filter(x => x.respondido).length;
+    const pct = 100 * hechos / Math.max(1, sesiones.length + cs.length);
+    const frase = FRASES[(new Date().getDate() + new Date().getMonth()) % FRASES.length];
+    const sigSesion = sesiones.find(s => !vistas.includes(s.id));
+    const codigos = est ? ['E1', 'RIASEC', 'E2', 'TRAMPAS', 'E3', 'AUTONOMIA'] : ['F1', 'F2'];
+    const logrados = cs.filter(x => x.respondido).map(x => x.codigo);
+    c.innerHTML = hero(est ? 'Tu proyecto de vida es una travesía: explora cada sesión, gana insignias y conversa con tu equipo cuando lo necesites. <b>La decisión es tuya.</b>'
+      : `Acompañe a ${h(p.estudianteNombre.split(' ')[0])} en su travesía: aquí está el material para familias, sus encuestas y un canal directo con el colegio.`,
+      `<div class="hola-acc">${anillo(pct, est ? 'de tu rumbo' : 'completado')}<div class="fila">${sigSesion ? `<button class="btn oro" data-s="${sigSesion.id}">${ic('cohete', 18)} ${est ? 'Continuar mi travesía' : 'Continuar'}</button>` : ''}${pend[0] ? `<button class="btn vidrio" data-q="${pend[0].id}">${ic('tarea', 18)} ${pend.length} pendiente${pend.length > 1 ? 's' : ''}</button>` : ''}</div></div>`) +
+      (p.debeCambiar ? `<div class="aviso-clave mt">${ic('candado', 20)}<span>Aún usas la clave inicial. Te recomendamos cambiarla por una personal.</span><button class="btn mini oro" onclick="ir('cuenta')">Cambiar clave</button></div>` : '') + `
+      <div class="frase mt">${ic('ampolleta', 26)}<div><b>${h(frase[0])}</b><span>${h(frase[1])}</span></div></div>
+      <div class="fila entre mt2"><h3 style="margin:0">${est ? 'Tu ruta de navegación' : 'Ruta para familias'}</h3><button class="btn fantasma mini" onclick="ir('sesiones')">Ver todas ${ic('flecha', 16)}</button></div>
+      <div class="ruta">${sesiones.map((s, i) => `<button class="parada ${vistas.includes(s.id) ? 'hecha' : ''} ${s === sigSesion ? 'actual' : ''}" data-s="${s.id}">
+        <div class="parada-img">${escena(s.imagen)}${vistas.includes(s.id) ? `<span class="parada-ok">${ic('check', 16)}</span>` : ''}</div>
+        <span class="parada-num">${s.numero ? 'Sesión ' + s.numero : 'Guía'}</span><b>${h(s.titulo)}</b></button>`).join('') || vacio(ic('brujula', 28), 'Pronto habrá sesiones disponibles.')}</div>
+      <div class="grid g3 kpis mt2">
+        <div class="tarjeta kpi color c1"><span class="kpi-ico">${ic('brujula', 22)}</span><b>${d.sesiones}</b><span>sesiones para explorar</span></div>
+        <div class="tarjeta kpi color c2"><span class="kpi-ico">${ic('tarea', 22)}</span><b>${pend.length}</b><span>${est ? 'cuestionarios' : 'encuestas'} pendientes</span></div>
+        <div class="tarjeta kpi color c3"><span class="kpi-ico">${ic('chat', 22)}</span><b>${d.noLeidos}</b><span>mensajes nuevos</span></div>
+      </div>
+      <h3 class="mt2">${ic('medalla', 20)} ${est ? 'Mis insignias' : 'Insignias de la familia'} <span class="chip oro">${codigos.filter(k => logrados.includes(k)).length}/${codigos.length}</span></h3>
+      <div class="insignias">${codigos.map(k => insignia(k, logrados.includes(k))).join('')}</div>
+      <div class="grid g2 mt2">
+        <div><h3>${ic('tarea', 20)} Pendientes</h3>${pend.length ? pend.map(q => `<div class="pendiente"><div class="pend-ico">${ic('tarea', 22)}</div><div style="flex:1;min-width:0"><span class="chip">${h(q.codigo)}</span><b>${h(q.titulo)}</b><div class="muted peq">${ic('reloj', 14)} ${q.nPreguntas} pregunta(s) · ¡gana una insignia!</div></div><button class="btn mini oro" data-q="${q.id}">Responder</button></div>`).join('') : vacio('🎉', '¡Estás al día! No tienes pendientes.')}</div>
+        <div><h3>${ic('megafono', 20)} Muro del curso</h3><div id="muro">${muro(d.avisos)}</div>${d.avisos.length ? `<button class="btn fantasma mini" onclick="ir('mensajes',{tab:'avisos'})">Ver todos los avisos ${ic('flecha', 16)}</button>` : ''}</div>
+      </div>`;
+    $$('[data-s]', c).forEach(b => b.onclick = () => ir('sesion', { id: b.dataset.s }));
+    $$('[data-q]', c).forEach(b => b.onclick = () => ir('responder', { id: b.dataset.q }));
+    activarLikes(c);
+    return;
+  }
+  const temas = ['brujula', 'estrella', 'lupa', 'balanza', 'bandera', 'camino'];
+  c.innerHTML = hero('Acompañe a sus estudiantes en su proyecto de vida: revise sesiones, habilite cuestionarios, analice resultados y converse con estudiantes y familias.',
+    `<div class="fila mt"><button class="btn oro" onclick="ir('analisis')">${ic('chispa', 18)} Análisis IA</button><button class="btn vidrio" onclick="ir('mensajes')">${ic('chat', 18)} Mensajes</button></div>`,
+    E.info.imagenes && E.info.imagenes.colegio) + `
+    <div class="grid g4 kpis mt">
+      <div class="tarjeta kpi color c1"><span class="kpi-ico">${ic('grupo', 22)}</span><b>${d.cursos.length}</b><span>curso(s)</span></div>
+      <div class="tarjeta kpi color c2"><span class="kpi-ico">${ic('mochila', 22)}</span><b>${d.estudiantes}</b><span>estudiantes</span></div>
+      <div class="tarjeta kpi color c4"><span class="kpi-ico">${ic('brujula', 22)}</span><b>${d.sesiones}</b><span>sesiones</span></div>
+      <div class="tarjeta kpi color c3"><span class="kpi-ico">${ic('chat', 22)}</span><b>${d.noLeidos}</b><span>consultas sin leer</span></div>
+    </div>
+    <h3 class="mt2">${ic('grupo', 20)} Mis cursos</h3>
+    <div class="grid g3">${d.cursos.map((x, i) => `<div class="tarjeta curso-card"><div class="curso-portada">${escena(temas[i % temas.length])}<span class="curso-nombre">${h(x.curso)}</span></div>
+      <div class="fila entre"><span class="chip">${ic('mochila', 14)} ${x.estudiantes} estudiantes</span></div>
+      <div class="fila mt"><button class="btn mini" data-curso="${h(x.curso)}" data-a="cursos">${ic('grupo', 15)} Estudiantes</button><button class="btn mini sec" data-curso="${h(x.curso)}" data-a="reportes">${ic('tendencia', 15)} Reporte</button><button class="btn mini oro" data-curso="${h(x.curso)}" data-a="analisis">${ic('chispa', 15)} Análisis</button></div></div>`).join('') ||
+      vacio(ic('grupo', 28), E.perfil.rol === 'admin' ? 'Aún no hay estudiantes. Use <b>Carga masiva</b> para importarlos.' : 'No tiene cursos asignados. Contacte al administrador.')}</div>
+    <h3 class="mt2">${ic('megafono', 20)} Avisos recientes</h3><div>${muro(d.avisos)}</div>`;
+  $$('[data-curso]', c).forEach(b => b.onclick = () => { E.cursoSel = b.dataset.curso; ir(b.dataset.a); });
+  activarLikes(c);
+};
+
+function muro(avisos) {
+  if (!avisos || !avisos.length) return vacio('📭', 'Sin avisos por ahora.');
+  return avisos.map(a => `<article class="tarjeta post" style="margin-bottom:12px"><div class="cab"><div class="avatar aro-story">${h(iniciales(a.deNombre))}</div><div><b>${h(a.deNombre)}</b><div class="muted peq">${h(ROL_TXT[a.deRol] || '')} · ${h(a.curso)} · ${fecha(a.fecha)}</div></div>
+    <span class="chip ${a.audiencia === 'familias' ? 'violeta' : a.audiencia === 'estudiantes' ? '' : 'oro'}" style="margin-left:auto">${a.audiencia === 'todos' ? 'Todos' : a.audiencia === 'familias' ? 'Familias' : 'Estudiantes'}</span></div>
+    <div class="texto">${h(a.texto)}</div>
+    <div class="acc"><button class="like ${a.meGusta ? 'on' : ''}" data-like="${a.id}" aria-pressed="${a.meGusta}">${ic('corazon', 20)} <span>${a.likes}</span></button><span class="muted peq" style="margin-left:auto">${ic('megafono', 14)} Aviso</span></div></article>`).join('');
+}
+function activarLikes(c) {
+  $$('[data-like]', c).forEach(b => b.onclick = async () => {
+    try { const r = await api('like', { id: b.dataset.like }); b.classList.toggle('on', r.meGusta); b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); b.innerHTML = ic('corazon', 20) + ` <span>${r.likes}</span>`; } catch (e) { toast(e.message, true); }
+  });
+}
+
+/* =====================================================================
+ * SESIONES
+ * ===================================================================== */
+VISTAS.sesiones = async (c) => {
+  const [lista, mats] = await Promise.all([api('sesiones'), api('materiales', { sesionId: '' })]);
+  const pers = esPersonal();
+  const filtro = E.params.aud || '';
+  const visibles = lista.filter(s => !filtro || s.audiencia === filtro);
+  c.innerHTML = `
+    <div class="fila entre"><p class="muted" style="margin:0">${pers ? 'Sesiones del proceso. Puede editarlas para sus cursos e incluir elementos emergentes.' : 'Explora cada sesión a tu ritmo.'}</p>
+      ${pers ? `<div class="fila"><div class="tabs" style="margin:0">${[['', 'Todas'], ['estudiantes', 'Estudiantes'], ['familias', 'Familias'], ['docentes', 'Docentes']].map(t => `<button class="tab ${filtro === t[0] ? 'activo' : ''}" data-aud="${t[0]}">${t[1]}</button>`).join('')}</div><button class="btn oro" id="bNueva">＋ Nueva sesión</button></div>` : ''}</div>
+    <div class="grid g3 mt">${visibles.map(s => `<button class="sesion-card" data-s="${s.id}">
+      <div class="portada">${escena(s.imagen)}<span class="num">${s.numero ? 'Sesión ' + s.numero : 'Guía'}</span>${!pers && local.pget('sesVistas', []).includes(s.id) ? `<span class="visto-chip">${ic('check', 14)} Vista</span>` : ''}</div>
+      <div class="cuerpo"><h3>${h(s.titulo)}</h3><p class="muted peq" style="margin:0 0 8px">${h(s.objetivo)}</p>
+      <div class="fila">${pers ? `<span class="chip ${s.audiencia === 'familias' ? 'violeta' : s.audiencia === 'docentes' ? 'oro' : ''}">${h(s.audiencia)}</span>${s.estado !== 'publicada' ? '<span class="chip alerta">borrador</span>' : ''}${s.baseId ? '<span class="chip ok">versión de mis cursos</span>' : ''}${s.cursos ? `<span class="chip">${h(s.cursos)}</span>` : ''}` : ''}
+      ${s.emergentes ? `<span class="chip oro">💡 ${s.emergentes}</span>` : ''}</div></div></button>`).join('') || vacio('🧭', 'No hay sesiones disponibles todavía.')}</div>
+    <h3 class="mt2">Material de apoyo</h3><div id="mats">${listaMateriales(mats)}</div>`;
+  $$('[data-s]', c).forEach(b => b.onclick = () => ir('sesion', { id: b.dataset.s }));
+  $$('[data-aud]', c).forEach(b => b.onclick = () => ir('sesiones', { aud: b.dataset.aud }));
+  if ($('#bNueva')) $('#bNueva').onclick = () => editorSesion(null);
+  activarMateriales(c);
+};
+
+function listaMateriales(mats) {
+  if (!mats.length) return vacio('📎', 'Sin material adicional.');
+  const ico = m => m.tieneArchivo ? (/pdf/.test(m.mime) ? '📕' : /image/.test(m.mime) ? '🖼️' : /video/.test(m.mime) ? '🎬' : '📄') : /youtu/.test(m.url) ? '🎬' : '🔗';
+  return `<div class="grid g2">${mats.map(m => `<div class="tarjeta plana fila" style="align-items:flex-start"><span style="font-size:1.8rem">${ico(m)}</span>
+    <div style="flex:1;min-width:0"><b>${h(m.titulo)}</b><div class="muted peq">${h(m.descripcion)}</div><div class="muted peq">${h(m.autorNombre)} · ${fecha(m.fecha)}${esPersonal() ? ' · ' + h(m.audiencia) + (m.cursos ? ' · ' + h(m.cursos) : '') : ''}</div></div>
+    <div class="fila">${m.tieneArchivo ? `<button class="btn mini sec" data-arch="${m.id}">Abrir</button>` : `<a class="btn mini sec" href="${h(m.url)}" target="_blank" rel="noopener">Abrir</a>`}
+    ${m.propio || E.perfil.rol === 'admin' ? `<button class="btn mini fantasma" data-delmat="${m.id}" title="Eliminar">🗑️</button>` : ''}</div></div>`).join('')}</div>`;
+}
+function activarMateriales(c) {
+  $$('[data-arch]', c).forEach(b => b.onclick = async () => {
+    b.disabled = true; b.textContent = '…';
+    try {
+      const f = await api('archivoMaterial', { id: b.dataset.arch });
+      const bytes = Uint8Array.from(atob(f.base64), ch => ch.charCodeAt(0));
+      const blob = new Blob([bytes], { type: f.mime });
+      if (/pdf|image|video|text/.test(f.mime)) { const w = window.open(URL.createObjectURL(blob), '_blank'); if (!w) descargar(f.nombre, blob); }
+      else descargar(f.nombre, blob);
+    } catch (e) { toast(e.message, true); }
+    b.disabled = false; b.textContent = 'Abrir';
+  });
+  $$('[data-delmat]', c).forEach(b => b.onclick = async () => {
+    if (!confirm('¿Eliminar este material?')) return;
+    try { await api('eliminarMaterial', { id: b.dataset.delmat }); toast('Material eliminado'); ir(E.vista, E.params); } catch (e) { toast(e.message, true); }
+  });
+}
+
+function renderBloque(b) {
+  const [, etq, icono] = BLOQUE[b.tipo] || BLOQUE.texto;
+  const cab = `<div class="bloque-cab"><span class="bloque-ico">${ic(icono, 20)}</span><div><div class="etq">${etq}</div>${b.titulo ? `<h3>${h(b.titulo)}</h3>` : ''}</div></div>`;
+  if (b.tipo === 'enlace') return `<div class="bloque enlace fila entre">${cab}<a class="btn mini oro" href="${h(b.texto || b.url)}" target="_blank" rel="noopener">Abrir sitio ${ic('flecha', 15)}</a></div>`;
+  if (b.tipo === 'video') {
+    const m = String(b.texto || b.url).match(/(?:youtu\.be\/|v=|embed\/)([\w-]{11})/);
+    return `<div class="bloque video">${cab}${m ? `<div style="position:relative;padding-top:56.25%;border-radius:12px;overflow:hidden"><iframe src="https://www.youtube-nocookie.com/embed/${m[1]}" title="${h(b.titulo)}" style="position:absolute;inset:0;width:100%;height:100%;border:0" allowfullscreen></iframe></div>` : `<a href="${h(b.texto)}" target="_blank" rel="noopener">Ver video ↗</a>`}</div>`;
+  }
+  if (b.tipo === 'imagen') return `<div class="bloque imagen">${cab}<img src="${h(b.texto || b.url)}" alt="${h(b.titulo)}" style="border-radius:12px"></div>`;
+  return `<div class="bloque ${h(b.tipo)}">${cab}<div class="bloque-txt">${sanear(b.texto)}</div></div>`;
+}
+/** Permite solo etiquetas de formato básicas en los textos de sesiones. */
+function sanear(html) {
+  const t = document.createElement('template'); t.innerHTML = String(html || '');
+  const permit = ['B', 'I', 'EM', 'STRONG', 'BR', 'P', 'UL', 'OL', 'LI', 'U', 'SMALL', 'A'];
+  const limpiar = n => Array.from(n.childNodes).forEach(x => {
+    if (x.nodeType === 1) {
+      if (!permit.includes(x.tagName)) { x.replaceWith(document.createTextNode(x.textContent)); return; }
+      Array.from(x.attributes).forEach(a => { if (!(x.tagName === 'A' && a.name === 'href' && /^https:/i.test(a.value))) x.removeAttribute(a.name); });
+      if (x.tagName === 'A') { x.setAttribute('target', '_blank'); x.setAttribute('rel', 'noopener'); }
+      limpiar(x);
+    }
+  });
+  limpiar(t.content); return t.innerHTML;
+}
+function mostrarEmergente(e) {
+  modal(`<div class="pop-caja" style="margin:0 auto"><div class="ico">${h(e.icono || '💡')}</div><h2 class="display">${h(e.titulo)}</h2><p>${sanear(e.texto)}</p><button class="btn oro" data-cerrar>Entendido</button></div>`);
+}
+
+VISTAS.sesion = async (c, p) => {
+  const s = await api('sesion', { id: p.id });
+  const vistas = local.pget('sesVistas', []); if (!vistas.includes(s.id)) { vistas.push(s.id); local.pset('sesVistas', vistas); }
+  const pers = esPersonal();
+  $('#tituloVista').textContent = s.numero ? 'Sesión ' + s.numero : 'Sesión';
+  c.innerHTML = `
+    <button class="btn fantasma mini no-print" onclick="ir('sesiones')">← Volver</button>
+    <section class="sesion-head mt">${escena(s.imagen, 'fondo')}<div class="sesion-head-txt"><span class="chip oro">${ic('brujula', 14)} ${s.numero ? 'Sesión ' + s.numero : 'Guía'} ${s.audiencia !== 'estudiantes' ? '· ' + h(s.audiencia) : ''}</span>
+      <h1>${h(s.titulo)}</h1><p class="objetivo">${ic('diana', 18)} <span><b>Objetivo:</b> ${h(s.objetivo)}</span></p>
+      <div class="fila peq" style="opacity:.9">${ic('reloj', 15)} 75 minutos · ${s.bloques.length} momentos${s.cuestionarios.length ? ' · ' + s.cuestionarios.length + ' cuestionario(s)' : ''}</div></div></section>
+    <div class="fila mt no-print">${s.emergentes.filter(e => e.disparador !== 'abrir' || true).map((e, i) => `<button class="pop-btn" data-pop="${i}">${h(e.icono)} ${h(e.titulo)}</button>`).join('')}
+      ${pers ? `<span style="flex:1"></span><button class="btn mini sec" id="bEditar">✏️ Editar${E.perfil.rol !== 'admin' && !s.baseId ? ' para mis cursos' : ''}</button><button class="btn mini sec" id="bRepSes">📈 Reporte de la sesión</button><button class="btn mini sec" id="bMat">📎 Agregar material</button>` : ''}
+      ${s.autorNombre ? `<span class="muted peq">Actualizada por ${h(s.autorNombre)} · ${fecha(s.actualizado)}</span>` : ''}</div>
+    ${s.bloques.map(renderBloque).join('')}
+    ${s.cuestionarios.length ? `<h3 class="mt2">${E.perfil.rol === 'apoderado' ? 'Encuestas' : 'Cuestionarios'} de esta sesión</h3><div class="grid g2">${s.cuestionarios.map(q => `<div class="tarjeta plana fila entre"><div><span class="chip">${h(q.codigo)}</span> <b>${h(q.titulo)}</b>${pers ? `<div class="muted peq">${q.habilitado ? 'Habilitado: ' + h(q.cursos || 'todos los cursos') : 'No habilitado'}</div>` : ''}</div>
+      ${pers ? `<button class="btn mini sec" onclick="ir('cuestionarios')">Gestionar</button>` : q.respondido ? `<button class="btn mini sec" data-q="${q.id}">Ver / editar</button>` : `<button class="btn mini oro" data-q="${q.id}">Responder</button>`}</div>`).join('')}</div>` : ''}
+    <h3 class="mt2">Material de la sesión</h3><div id="matSes">${listaMateriales(s.materiales)}</div>`;
+  $$('[data-pop]', c).forEach(b => b.onclick = () => mostrarEmergente(s.emergentes[b.dataset.pop]));
+  $$('[data-q]', c).forEach(b => b.onclick = () => ir('responder', { id: b.dataset.q }));
+  activarMateriales(c);
+  const alAbrir = s.emergentes.find(e => e.disparador === 'abrir');
+  if (alAbrir && !pers) setTimeout(() => mostrarEmergente(alAbrir), 350);
+  if (pers) {
+    $('#bEditar').onclick = () => editorSesion(s);
+    $('#bRepSes').onclick = async () => { const cursos = await misCursos(); E.cursoSel = E.cursoSel || (cursos[0] && cursos[0].curso); ir('reportes', { tab: 'sesion', sesionId: s.id }); };
+    $('#bMat').onclick = () => formMaterial(s.baseId || s.id);
+  }
+};
+
+function editorSesion(s) {
+  const admin = E.perfil.rol === 'admin';
+  s = s || { titulo: '', objetivo: '', audiencia: 'estudiantes', cursos: admin ? '' : E.perfil.cursos.join(', '), estado: 'borrador', numero: 0, imagen: 'brujula', bloques: [], emergentes: [] };
+  let bloques = JSON.parse(JSON.stringify(s.bloques)), pops = JSON.parse(JSON.stringify(s.emergentes));
+  const c = modal(`<h2>${s.id ? 'Editar sesión' : 'Nueva sesión'}</h2>
+    ${s.id && !admin && !s.baseId ? '<p class="chip ok">Los cambios se guardarán como versión para sus cursos; los demás cursos no se ven afectados.</p>' : ''}
+    <div class="grid g2 mt"><label class="campo"><span>Título</span><input class="input" id="sTit" value="${h(s.titulo)}"></label>
+    <label class="campo"><span>Ícono</span><select class="input" id="sImg">${Object.keys(EMOJI).map(k => `<option value="${k}" ${s.imagen === k ? 'selected' : ''}>${EMOJI[k]} ${k}</option>`).join('')}</select></label></div>
+    <label class="campo"><span>Objetivo</span><textarea class="input" id="sObj" style="min-height:60px">${h(s.objetivo)}</textarea></label>
+    ${admin || !s.id ? `<div class="grid g4">
+      <label class="campo"><span>N.°</span><input class="input" id="sNum" type="number" min="0" value="${s.numero || 0}"></label>
+      <label class="campo"><span>Audiencia</span><select class="input" id="sAud" ${!admin ? 'disabled' : ''}>${['estudiantes', 'familias', 'docentes', 'todos'].map(a => `<option ${s.audiencia === a ? 'selected' : ''}>${a}</option>`).join('')}</select></label>
+      <label class="campo"><span>Estado</span><select class="input" id="sEst">${['borrador', 'publicada'].map(a => `<option ${s.estado === a ? 'selected' : ''}>${a}</option>`).join('')}</select></label>
+      <label class="campo"><span>Cursos</span><input class="input" id="sCur" value="${h(s.cursos)}" placeholder="vacío = todos"></label></div>` : ''}
+    <h3 class="mt">Contenido</h3><div id="eBloques"></div>
+    <button class="btn mini sec" id="bAddBloque">＋ Agregar bloque</button>
+    <h3 class="mt2">Elementos emergentes 💡</h3><p class="muted peq">Ventanas con consejos, preguntas o recordatorios. "Al abrir" aparece apenas el estudiante entra; "Botón" aparece como botón dorado.</p>
+    <div id="ePops"></div><button class="btn mini sec" id="bAddPop">＋ Agregar emergente</button>
+    <div class="fila mt2"><button class="btn oro" id="bGuardarSes">Guardar</button>${s.id && admin ? '<button class="btn peligro" id="bEliminarSes">Eliminar</button>' : ''}<button class="btn fantasma" data-cerrar>Cancelar</button></div>`, true);
+  const pintar = () => {
+    $('#eBloques', c).innerHTML = bloques.map((b, i) => `<div class="editor-bloque"><div class="fila"><select class="input" style="width:auto" data-bt="${i}">${Object.keys(BLOQUE).map(k => `<option value="${k}" ${b.tipo === k ? 'selected' : ''}>${BLOQUE[k][0]} ${BLOQUE[k][1]}</option>`).join('')}</select>
+      <input class="input" style="flex:1" data-bti="${i}" placeholder="Título" value="${h(b.titulo)}"><button class="btn mini fantasma" data-up="${i}" title="Subir">↑</button><button class="btn mini fantasma" data-del="${i}" title="Quitar">✕</button></div>
+      <textarea class="input mt" data-btx="${i}" placeholder="${['enlace', 'video', 'imagen'].includes(b.tipo) ? 'URL https://…' : 'Texto (admite <b>, <i>, <br>)'}">${h(b.texto)}</textarea></div>`).join('') || '<p class="muted">Sin bloques.</p>';
+    $('#ePops', c).innerHTML = pops.map((p, i) => `<div class="editor-bloque"><div class="fila"><input class="input" style="width:64px" data-pi="${i}" value="${h(p.icono)}" aria-label="Ícono"><input class="input" style="flex:1" data-pt="${i}" placeholder="Título" value="${h(p.titulo)}">
+      <select class="input" style="width:auto" data-pd="${i}"><option value="boton" ${p.disparador === 'boton' ? 'selected' : ''}>Botón</option><option value="abrir" ${p.disparador === 'abrir' ? 'selected' : ''}>Al abrir</option></select><button class="btn mini fantasma" data-pdel="${i}">✕</button></div>
+      <textarea class="input mt" style="min-height:60px" data-px="${i}" placeholder="Mensaje">${h(p.texto)}</textarea></div>`).join('');
+    $$('[data-bt]', c).forEach(x => x.onchange = () => { bloques[x.dataset.bt].tipo = x.value; pintar(); });
+    $$('[data-bti]', c).forEach(x => x.oninput = () => bloques[x.dataset.bti].titulo = x.value);
+    $$('[data-btx]', c).forEach(x => x.oninput = () => bloques[x.dataset.btx].texto = x.value);
+    $$('[data-del]', c).forEach(x => x.onclick = () => { bloques.splice(+x.dataset.del, 1); pintar(); });
+    $$('[data-up]', c).forEach(x => x.onclick = () => { const i = +x.dataset.up; if (i > 0) { [bloques[i - 1], bloques[i]] = [bloques[i], bloques[i - 1]]; pintar(); } });
+    $$('[data-pi]', c).forEach(x => x.oninput = () => pops[x.dataset.pi].icono = x.value);
+    $$('[data-pt]', c).forEach(x => x.oninput = () => pops[x.dataset.pt].titulo = x.value);
+    $$('[data-px]', c).forEach(x => x.oninput = () => pops[x.dataset.px].texto = x.value);
+    $$('[data-pd]', c).forEach(x => x.onchange = () => pops[x.dataset.pd].disparador = x.value);
+    $$('[data-pdel]', c).forEach(x => x.onclick = () => { pops.splice(+x.dataset.pdel, 1); pintar(); });
+  };
+  pintar();
+  $('#bAddBloque', c).onclick = () => { bloques.push({ tipo: 'texto', titulo: '', texto: '' }); pintar(); };
+  $('#bAddPop', c).onclick = () => { pops.push({ icono: '💡', titulo: '', texto: '', disparador: 'boton' }); pintar(); };
+  $('#bGuardarSes', c).onclick = async (ev) => {
+    const d = { id: s.id, titulo: $('#sTit', c).value, objetivo: $('#sObj', c).value, imagen: $('#sImg', c).value, bloques, emergentes: pops };
+    if ($('#sNum', c)) Object.assign(d, { numero: +$('#sNum', c).value, audiencia: $('#sAud', c).value, estado: $('#sEst', c).value, cursos: $('#sCur', c).value });
+    ev.target.disabled = true;
+    try { const r = await api('guardarSesion', d); cerrarModal(); toast('Sesión guardada'); ir('sesion', { id: r.id }); } catch (e) { toast(e.message, true); ev.target.disabled = false; }
+  };
+  if ($('#bEliminarSes', c)) $('#bEliminarSes', c).onclick = async () => {
+    if (!confirm('¿Eliminar definitivamente esta sesión?')) return;
+    try { await api('eliminarSesion', { id: s.id }); cerrarModal(); toast('Sesión eliminada'); ir('sesiones'); } catch (e) { toast(e.message, true); }
+  };
+}
+
+/* =====================================================================
+ * MATERIALES
+ * ===================================================================== */
+VISTAS.materiales = async (c) => {
+  const [mats, ses] = await Promise.all([api('materiales'), api('sesiones')]);
+  E._sesiones = ses;
+  c.innerHTML = `<div class="fila entre"><p class="muted" style="margin:0">Comparta guías, presentaciones, videos o enlaces con sus cursos.</p><button class="btn oro" id="bNuevoMat">＋ Agregar material</button></div><div class="mt">${listaMateriales(mats)}</div>`;
+  $('#bNuevoMat').onclick = () => formMaterial('');
+  activarMateriales(c);
+};
+async function formMaterial(sesionId) {
+  const ses = E._sesiones || await api('sesiones');
+  const cursos = await misCursos();
+  const c = modal(`<h2>Agregar material</h2>
+    <label class="campo"><span>Título</span><input class="input" id="mTit"></label>
+    <label class="campo"><span>Descripción</span><textarea class="input" id="mDesc" style="min-height:60px"></textarea></label>
+    <div class="grid g2"><label class="campo"><span>Sesión</span><select class="input" id="mSes"><option value="">General (sin sesión)</option>${ses.map(s => `<option value="${s.baseId || s.id}" ${(s.baseId || s.id) === sesionId ? 'selected' : ''}>${s.numero ? 'S' + s.numero + ' · ' : ''}${h(s.titulo)} (${h(s.audiencia)})</option>`).join('')}</select></label>
+    <label class="campo"><span>Para</span><select class="input" id="mAud"><option value="estudiantes">Estudiantes</option><option value="familias">Familias</option><option value="docentes">Equipo docente</option><option value="todos">Todos</option></select></label></div>
+    <label class="campo"><span>Cursos</span><select class="input" id="mCur" multiple size="${Math.min(5, cursos.length + 1)}">${E.perfil.rol === 'admin' ? '<option value="" selected>Todos los cursos</option>' : ''}${cursos.map(x => `<option ${E.perfil.rol !== 'admin' ? 'selected' : ''}>${h(x.curso)}</option>`).join('')}</select><small>Ctrl/Cmd + clic para elegir varios.</small></label>
+    <div class="tabs"><button class="tab activo" data-mt="archivo">📄 Subir archivo</button><button class="tab" data-mt="enlace">🔗 Enlace</button></div>
+    <div id="mArchivo"><div class="drop" id="mDrop">Arrastre un archivo aquí o <label style="color:var(--mar);cursor:pointer;font-weight:700">elíjalo<input type="file" id="mFile" hidden></label><div class="muted peq">PDF, imágenes, documentos · máx. 15 MB · se guarda de forma privada</div><div id="mNombre" class="mt"></div></div></div>
+    <div id="mEnlace" hidden><label class="campo"><span>URL (https)</span><input class="input" id="mUrl" placeholder="https://"></label></div>
+    <div class="fila mt"><button class="btn oro" id="bSubirMat">Guardar</button><button class="btn fantasma" data-cerrar>Cancelar</button></div>`);
+  let modo = 'archivo', archivo = null;
+  $$('[data-mt]', c).forEach(b => b.onclick = () => { modo = b.dataset.mt; $$('[data-mt]', c).forEach(x => x.classList.toggle('activo', x === b)); $('#mArchivo', c).hidden = modo !== 'archivo'; $('#mEnlace', c).hidden = modo !== 'enlace'; });
+  const elegir = f => { archivo = f; $('#mNombre', c).innerHTML = f ? `<span class="chip">${h(f.name)} · ${(f.size / 1048576).toFixed(1)} MB</span>` : ''; if (f && !$('#mTit', c).value) $('#mTit', c).value = f.name.replace(/\.[^.]+$/, ''); };
+  $('#mFile', c).onchange = e => elegir(e.target.files[0]);
+  const drop = $('#mDrop', c);
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('sobre'); };
+  drop.ondragleave = () => drop.classList.remove('sobre');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('sobre'); elegir(e.dataTransfer.files[0]); };
+  $('#bSubirMat', c).onclick = async ev => {
+    const cur = Array.from($('#mCur', c).selectedOptions).map(o => o.value).filter(Boolean).join(', ');
+    const d = { titulo: $('#mTit', c).value, descripcion: $('#mDesc', c).value, sesionId: $('#mSes', c).value, audiencia: $('#mAud', c).value, cursos: cur };
+    if (modo === 'archivo') {
+      if (!archivo) return toast('Elija un archivo.', true);
+      if (archivo.size > 15 * 1048576) return toast('El archivo supera 15 MB. Súbalo a Drive y comparta el enlace.', true);
+      d.base64 = await leerArchivo(archivo); d.mime = archivo.type || 'application/octet-stream'; d.nombre = archivo.name;
+    } else d.url = $('#mUrl', c).value;
+    ev.target.disabled = true; ev.target.textContent = 'Subiendo…';
+    try { await api('guardarMaterial', d); cerrarModal(); toast('Material compartido'); ir(E.vista, E.params); } catch (e) { toast(e.message, true); ev.target.disabled = false; ev.target.textContent = 'Guardar'; }
+  };
+}
+
+/* =====================================================================
+ * CUESTIONARIOS
+ * ===================================================================== */
+VISTAS.cuestionarios = async (c) => {
+  const lista = await api('cuestionarios');
+  if (!esPersonal()) {
+    c.innerHTML = `<p class="muted">Responde con calma y con tus propias palabras. Puedes volver a editar tus respuestas mientras el cuestionario esté habilitado.</p>
+      <div class="grid g2">${lista.map(q => { const ins = INSIGNIAS[q.codigo] || ['', 'tarea', '#0f4c9c']; return `<div class="tarjeta cuest-card ${q.respondido ? 'hecho' : ''}" style="--c:${ins[2]}"><div class="cuest-ico">${ic(q.respondido ? 'check' : ins[1], 26)}</div>
+        <div style="flex:1;min-width:0"><span class="chip ${q.respondido ? 'ok' : 'oro'}">${q.respondido ? 'Respondido' : 'Pendiente'}</span><h3 class="mt" style="margin-bottom:2px">${h(q.titulo)}</h3><div class="muted peq">${h(q.descripcion)}</div>
+        ${ins[0] ? `<div class="peq mt" style="color:var(--c);font-weight:700">${ic('medalla', 14)} Insignia: ${h(ins[0])}</div>` : ''}</div>
+        <button class="btn ${q.respondido ? 'sec' : 'oro'}" data-q="${q.id}">${q.respondido ? 'Revisar' : 'Responder'}</button></div>`; }).join('') || vacio(ic('tarea', 28), 'No hay cuestionarios habilitados por ahora.')}</div>`;
+    $$('[data-q]', c).forEach(b => b.onclick = () => ir('responder', { id: b.dataset.q }));
+    return;
+  }
+  const cursos = await misCursos();
+  const admin = E.perfil.rol === 'admin';
+  E.cursoSel = E.cursoSel || (cursos[0] && cursos[0].curso) || '';
+  const hab = q => q.habilitado && (!q.cursos || q.cursos.split(/[,;]/).map(x => x.trim().toUpperCase().replace(/[\s°º.\-]/g, '')).includes(E.cursoSel.toUpperCase().replace(/[\s°º.\-]/g, '')));
+  c.innerHTML = `<div class="fila entre"><label class="fila"><b>Curso</b><select class="input" style="width:auto" id="qCurso">${opcionesCursos(cursos, E.cursoSel)}</select></label>
+    ${admin ? '<button class="btn oro" id="bNuevoQ">＋ Nuevo cuestionario</button>' : ''}</div>
+    <p class="muted peq mt">Active un cuestionario para que el curso lo vea y pueda responderlo.${admin ? ' Como administrador también puede habilitarlo para todos los cursos a la vez.' : ''}</p>
+    <div class="tabla-wrap"><table class="tabla"><thead><tr><th>Código</th><th>Cuestionario</th><th>Para</th><th>Preguntas</th><th>Estado en ${h(E.cursoSel)}</th><th></th></tr></thead><tbody>
+    ${lista.map(q => `<tr><td><span class="chip">${h(q.codigo)}</span></td><td><b>${h(q.titulo)}</b><div class="muted peq">${h(q.descripcion)}</div></td><td>${h(q.audiencia)}</td><td>${q.nPreguntas}</td>
+      <td><label class="fila"><input type="checkbox" data-hab="${q.id}" ${hab(q) ? 'checked' : ''} ${!E.cursoSel ? 'disabled' : ''}> ${hab(q) ? '<span class="chip ok">Habilitado</span>' : '<span class="chip">Inactivo</span>'}</label>
+      ${admin ? `<div class="muted peq">Global: ${q.habilitado ? (q.cursos ? h(q.cursos) : 'todos los cursos') : 'desactivado'}</div>` : ''}</td>
+      <td class="fila"><button class="btn mini sec" data-ver="${q.id}">Vista previa</button>${admin ? `<button class="btn mini sec" data-edit="${q.id}">Editar</button><button class="btn mini sec" data-todos="${q.id}" data-on="${q.habilitado && !q.cursos ? 0 : 1}">${q.habilitado && !q.cursos ? 'Desactivar en todos' : 'Habilitar en todos'}</button>` : ''}</td></tr>`).join('')}
+    </tbody></table></div>`;
+  $('#qCurso').onchange = e => { E.cursoSel = e.target.value; ir('cuestionarios'); };
+  $$('[data-hab]', c).forEach(x => x.onchange = async () => {
+    try { await api('habilitarCuestionario', { id: x.dataset.hab, curso: E.cursoSel, habilitado: x.checked }); toast(x.checked ? 'Habilitado para ' + E.cursoSel : 'Desactivado para ' + E.cursoSel); ir('cuestionarios'); } catch (e) { toast(e.message, true); x.checked = !x.checked; }
+  });
+  $$('[data-todos]', c).forEach(b => b.onclick = async () => { try { await api('habilitarCuestionario', { id: b.dataset.todos, habilitado: b.dataset.on === '1', cursos: '' }); ir('cuestionarios'); } catch (e) { toast(e.message, true); } });
+  $$('[data-ver]', c).forEach(b => b.onclick = () => ir('responder', { id: b.dataset.ver, previa: true }));
+  $$('[data-edit]', c).forEach(b => b.onclick = async () => editorCuestionario(await api('cuestionario', { id: b.dataset.edit })));
+  if ($('#bNuevoQ')) $('#bNuevoQ').onclick = () => editorCuestionario(null);
+};
+
+function editorCuestionario(q) {
+  q = q || { codigo: '', titulo: '', descripcion: '', audiencia: 'estudiantes', sesionId: '', preguntas: [] };
+  let preg = JSON.parse(JSON.stringify(q.preguntas));
+  const c = modal(`<h2>${q.id ? 'Editar' : 'Nuevo'} cuestionario</h2>
+    <div class="grid g3"><label class="campo"><span>Código</span><input class="input" id="qCod" value="${h(q.codigo)}" placeholder="E4"></label>
+    <label class="campo"><span>Para</span><select class="input" id="qAud"><option ${q.audiencia === 'estudiantes' ? 'selected' : ''}>estudiantes</option><option ${q.audiencia === 'familias' ? 'selected' : ''}>familias</option></select></label>
+    <label class="campo"><span>Sesión</span><select class="input" id="qSes"><option value="">—</option></select></label></div>
+    <label class="campo"><span>Título</span><input class="input" id="qTit" value="${h(q.titulo)}"></label>
+    <label class="campo"><span>Instrucciones</span><input class="input" id="qDesc" value="${h(q.descripcion)}"></label>
+    <p class="muted peq">Los códigos E1, E2, E3, RIASEC, TRAMPAS, AUTONOMIA, F1 y F2 alimentan los indicadores de proyección: cambie sus preguntas con cuidado.</p>
+    <div id="qPreg"></div><button class="btn mini sec" id="bAddP">＋ Pregunta</button>
+    <div class="fila mt2"><button class="btn oro" id="bGuardarQ">Guardar</button><button class="btn fantasma" data-cerrar>Cancelar</button></div>`, true);
+  api('sesiones').then(ss => { $('#qSes', c).innerHTML = '<option value="">—</option>' + ss.filter(s => !s.baseId).map(s => `<option value="${s.id}" ${q.sesionId === s.id ? 'selected' : ''}>${s.numero ? 'S' + s.numero + ' · ' : ''}${h(s.titulo)}</option>`).join(''); });
+  const tipos = { likert: 'Escala de acuerdo', unica: 'Selección única', multiple: 'Selección múltiple', abierta: 'Respuesta abierta', escala: 'Tabla de ítems (1-4)', pareo: 'Pareo / asociación', pasos: 'Plan en pasos' };
+  const pintar = () => {
+    $('#qPreg', c).innerHTML = preg.map((p, i) => `<div class="editor-bloque"><div class="fila"><b>${i + 1}.</b><select class="input" style="width:auto" data-t="${i}">${Object.keys(tipos).map(k => `<option value="${k}" ${p.tipo === k ? 'selected' : ''}>${tipos[k]}</option>`).join('')}</select>
+      <label class="fila peq"><input type="checkbox" data-o="${i}" ${p.obligatoria ? 'checked' : ''}> Obligatoria</label><span style="flex:1"></span><button class="btn mini fantasma" data-x="${i}">✕</button></div>
+      <input class="input mt" data-tx="${i}" value="${h(p.texto)}" placeholder="Enunciado">
+      ${['likert', 'unica', 'multiple', 'escala', 'pareo'].includes(p.tipo) ? `<textarea class="input mt" data-op="${i}" style="min-height:60px" placeholder="Opciones, una por línea">${h((p.opciones || []).join('\n'))}</textarea>` : ''}
+      ${['escala', 'pareo'].includes(p.tipo) ? `<textarea class="input mt" data-it="${i}" style="min-height:60px" placeholder="Ítems, uno por línea">${h((p.items || []).map(x => x.texto).join('\n'))}</textarea>` : ''}</div>`).join('');
+    $$('[data-t]', c).forEach(x => x.onchange = () => { preg[x.dataset.t].tipo = x.value; if (x.value === 'likert' && !preg[x.dataset.t].opciones) preg[x.dataset.t].opciones = ['Totalmente en desacuerdo', 'En desacuerdo', 'De acuerdo', 'Totalmente de acuerdo']; pintar(); });
+    $$('[data-o]', c).forEach(x => x.onchange = () => preg[x.dataset.o].obligatoria = x.checked);
+    $$('[data-tx]', c).forEach(x => x.oninput = () => preg[x.dataset.tx].texto = x.value);
+    $$('[data-op]', c).forEach(x => x.oninput = () => preg[x.dataset.op].opciones = x.value.split('\n').map(s => s.trim()).filter(Boolean));
+    $$('[data-it]', c).forEach(x => x.oninput = () => { const p = preg[x.dataset.it]; const prev = p.items || []; p.items = x.value.split('\n').map(s => s.trim()).filter(Boolean).map((t, j) => Object.assign({}, prev[j] || {}, { id: (prev[j] && prev[j].id) || (p.tipo === 'pareo' ? 't' : 'a') + (j + 1), texto: t })); });
+    $$('[data-x]', c).forEach(x => x.onclick = () => { preg.splice(+x.dataset.x, 1); pintar(); });
+  };
+  pintar();
+  $('#bAddP', c).onclick = () => { const n = preg.length + 1; let id = 'q' + n; while (preg.some(p => p.id === id)) id += 'b'; preg.push({ id, n, tipo: 'abierta', texto: '' }); pintar(); };
+  $('#bGuardarQ', c).onclick = async () => {
+    preg.forEach((p, i) => { p.n = i + 1; });
+    try { await api('guardarCuestionario', { id: q.id, codigo: $('#qCod', c).value.trim().toUpperCase(), titulo: $('#qTit', c).value, descripcion: $('#qDesc', c).value, audiencia: $('#qAud', c).value, sesionId: $('#qSes', c).value, preguntas: preg }); cerrarModal(); toast('Cuestionario guardado'); ir('cuestionarios'); }
+    catch (e) { toast(e.message, true); }
+  };
+}
+
+VISTAS.responder = async (c, p) => {
+  const q = await api('cuestionario', { id: p.id });
+  const previa = q.previa || {};
+  const soloVer = esPersonal();
+  $('#tituloVista').textContent = q.codigo;
+  c.innerHTML = `<button class="btn fantasma mini" onclick="ir('cuestionarios')">← Volver</button>
+    <div class="tarjeta mt"><span class="chip oro">${h(q.codigo)}</span><h1 class="mt" style="font-size:1.7rem">${h(q.titulo)}</h1><p class="muted">${h(q.descripcion)}</p>
+    <div class="progreso" aria-hidden="true"><div id="barra" style="width:0%"></div></div>
+    <form id="fQ" class="mt">${q.preguntas.map(pr => renderPregunta(pr, previa[pr.id])).join('')}
+    ${soloVer ? '<p class="chip">Vista previa del equipo: no se guardan respuestas.</p>' : `<button class="btn oro mt" id="bEnviarQ">${Object.keys(previa).length ? 'Actualizar respuestas' : 'Enviar respuestas'}</button>`}</form></div>`;
+  const f = $('#fQ');
+  const progreso = () => {
+    const r = recogerRespuestas(q.preguntas, f);
+    const n = q.preguntas.filter(pr => { const v = r[pr.id]; return v !== undefined && v !== '' && !(Array.isArray(v) && !v.length) && !(typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length); }).length;
+    $('#barra').style.width = Math.round(100 * n / Math.max(1, q.preguntas.length)) + '%';
+  };
+  f.addEventListener('input', progreso); f.addEventListener('change', progreso); progreso();
+  f.onsubmit = async e => {
+    e.preventDefault(); if (soloVer) return;
+    const b = $('#bEnviarQ'); b.disabled = true; b.textContent = 'Enviando…';
+    try {
+      const r = await api('responder', { id: q.id, respuestas: recogerRespuestas(q.preguntas, f) });
+      c.innerHTML = `<div class="resultado">${confeti()}<div class="fila" style="gap:18px">${insignia(q.codigo, true, q.titulo)}<div><span class="chip ok">${ic('check', 14)} ¡Nueva insignia desbloqueada!</span><h2 class="mt">${r.resultado.titulo}</h2></div></div>${r.resultado.mensajes.map(m => `<p>${sanear(m)}</p>`).join('')}
+        ${r.resultado.datos.riasec ? '<div class="lienzo" style="background:#fff;border-radius:14px;padding:10px"><canvas id="cRes"></canvas></div>' : ''}
+        <div class="fila mt"><button class="btn" onclick="ir('resultados')">Ver mis resultados</button><button class="btn sec" onclick="ir('inicio')">Ir al inicio</button></div></div>`;
+      if (r.resultado.datos.riasec) graficoRiasec($('#cRes'), r.resultado.datos.riasec);
+    } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Enviar respuestas'; }
+  };
+};
+function renderPregunta(p, v) {
+  const nombre = 'p_' + p.id;
+  let cuerpo = '';
+  if (p.tipo === 'likert' || p.tipo === 'unica') cuerpo = `<div class="opciones" role="radiogroup">${p.opciones.map(o => `<label class="opcion"><input type="radio" name="${nombre}" value="${h(o)}" ${v === o ? 'checked' : ''}><span>${h(o)}</span></label>`).join('')}</div>`;
+  else if (p.tipo === 'multiple') cuerpo = `<div class="opciones">${p.opciones.map(o => `<label class="opcion"><input type="checkbox" name="${nombre}" value="${h(o)}" ${(v || []).includes(o) ? 'checked' : ''}><span>${h(o)}</span></label>`).join('')}</div>`;
+  else if (p.tipo === 'abierta') cuerpo = `<textarea class="input" name="${nombre}" maxlength="3000" placeholder="Escribe aquí…">${h(v || '')}</textarea>`;
+  else if (p.tipo === 'escala') cuerpo = `<div class="tabla-wrap"><table class="escala"><thead><tr><th style="text-align:left">Actividad</th>${p.opciones.map(o => `<th>${h(o)}</th>`).join('')}</tr></thead><tbody>
+    ${p.items.map((it, i) => `<tr><td>${i + 1}. ${h(it.texto)}</td>${p.opciones.map((o, j) => `<td class="o"><input type="radio" aria-label="${h(o)}" name="${nombre}_${it.id}" value="${j + 1}" ${v && String(v[it.id]) === String(j + 1) ? 'checked' : ''}></td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  else if (p.tipo === 'pareo') cuerpo = p.items.map((it, i) => `<div class="fila" style="margin-bottom:10px;align-items:flex-start"><span style="flex:1;min-width:220px">${i + 1}. ${h(it.texto)}</span><select class="input" style="width:auto;min-width:220px" name="${nombre}_${it.id}"><option value="">Elige la trampa…</option>${p.opciones.map(o => `<option ${v && v[it.id] === o ? 'selected' : ''}>${h(o)}</option>`).join('')}</select></div>`).join('');
+  else if (p.tipo === 'pasos') cuerpo = Array.from({ length: p.pasos || 3 }, (_, i) => `<div class="grid" style="grid-template-columns:1fr 170px;gap:8px;margin-bottom:8px"><input class="input" name="${nombre}_texto${i + 1}" placeholder="Paso ${i + 1}: ¿qué voy a hacer?" value="${h(v ? v['texto' + (i + 1)] || '' : '')}"><input class="input" type="date" name="${nombre}_fecha${i + 1}" value="${h(v ? v['fecha' + (i + 1)] || '' : '')}"></div>`).join('');
+  return `<fieldset class="pregunta" style="border:0;margin:0;padding-left:0;padding-right:0"><legend class="enun"><span class="n">${p.n}</span>${h(p.texto)}${p.obligatoria ? ' <span style="color:var(--ladrillo)">*</span>' : ''}</legend>${cuerpo}</fieldset>`;
+}
+function recogerRespuestas(preguntas, f) {
+  const r = {};
+  preguntas.forEach(p => {
+    const n = 'p_' + p.id;
+    if (p.tipo === 'likert' || p.tipo === 'unica') { const x = f.querySelector(`input[name="${n}"]:checked`); if (x) r[p.id] = x.value; }
+    else if (p.tipo === 'multiple') r[p.id] = $$(`input[name="${n}"]:checked`, f).map(x => x.value);
+    else if (p.tipo === 'abierta') { const t = f.querySelector(`[name="${n}"]`).value.trim(); if (t) r[p.id] = t; }
+    else if (p.tipo === 'escala') { const o = {}; p.items.forEach(it => { const x = f.querySelector(`input[name="${n}_${it.id}"]:checked`); if (x) o[it.id] = x.value; }); if (Object.keys(o).length) r[p.id] = o; }
+    else if (p.tipo === 'pareo') { const o = {}; p.items.forEach(it => { const x = f.querySelector(`[name="${n}_${it.id}"]`); if (x && x.value) o[it.id] = x.value; }); if (Object.keys(o).length) r[p.id] = o; }
+    else if (p.tipo === 'pasos') { const o = {}; $$(`[name^="${n}_"]`, f).forEach(x => { if (x.value) o[x.name.slice(n.length + 1)] = x.value; }); if (Object.keys(o).length) r[p.id] = o; }
+  });
+  return r;
+}
+
+/* =====================================================================
+ * RESULTADOS (estudiante / apoderado)
+ * ===================================================================== */
+function graficoRadar(canvas, ind, etiqueta) {
+  graficar(canvas, { type: 'radar', data: { labels: DIM.map(d => d[1]), datasets: [{ label: etiqueta || 'Nivel (1 a 4)', data: DIM.map(d => ind[d[0]]), backgroundColor: 'rgba(227,181,5,.25)', borderColor: '#e3b505', pointBackgroundColor: '#0b2a66', borderWidth: 2 }] },
+    options: { scales: { r: { min: 0, max: 4, ticks: { stepSize: 1, backdropColor: 'transparent' } } }, plugins: { legend: { display: false } } } });
+}
+function graficoRiasec(canvas, g) {
+  const l = 'RIASEC'.split('');
+  graficar(canvas, { type: 'bar', data: { labels: l.map(x => x + ' · ' + RIASEC_T[x]), datasets: [{ data: l.map(x => g[x] || 0), backgroundColor: COLORES, borderRadius: 8 }] },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, suggestedMax: 12 } } } });
+}
+VISTAS.resultados = async (c) => {
+  const d = await api('misResultados');
+  const est = E.perfil.rol === 'estudiante';
+  const ind = d.indicadores;
+  c.innerHTML = `
+    ${est && ind ? `<div class="grid g2"><div class="tarjeta"><h3>Mi brújula de decisión</h3><p class="muted peq">Cuatro indicadores del 1 al 4, calculados con tus respuestas. Orientan, no te clasifican.</p><div class="lienzo"><canvas id="cRadar"></canvas></div>
+      <div class="fila mt">${DIM.map(x => `<span class="chip">${x[1]}: ${ind.niveles[x[0]] || 'sin datos'}</span>`).join('')}</div></div>
+      <div class="tarjeta"><h3>Mi perfil de intereses ${ind.perfil ? `<span class="chip oro">${h(ind.perfil)}</span>` : ''}</h3>${ind.riasec ? '<div class="lienzo"><canvas id="cRiasec"></canvas></div>' : vacio('⭐', 'Responde el Mapa de intereses para ver tu perfil.')}</div></div>` : ''}
+    <h3 class="mt2">💬 Retroalimentación del equipo</h3>
+    ${d.retro.length ? d.retro.map(r => `<article class="tarjeta post" style="margin-bottom:12px"><div class="cab"><div class="avatar">${h(iniciales(r.autorNombre))}</div><div><b>${h(r.autorNombre)}</b><div class="muted peq">${fecha(r.fecha)}</div></div></div><div class="texto">${h(r.texto)}</div></article>`).join('')
+      : vacio('🌱', E.perfil.rol === 'apoderado' ? 'No hay retroalimentación compartida con la familia por ahora.' : 'Aún no tienes retroalimentación. ¡Llegará pronto!')}
+    <h3 class="mt2">📝 Mis respuestas y resultados</h3>
+    ${d.propios.length ? d.propios.map((r, i) => `<details class="tarjeta plana" style="margin-bottom:10px" ${i === 0 ? 'open' : ''}><summary class="fila entre" style="cursor:pointer"><span><span class="chip">${h(r.codigo)}</span> <b>${h(r.titulo)}</b></span><span class="muted peq">${fecha(r.fecha)}</span></summary>
+      <div class="resultado mt" style="padding:16px"><b>${r.resultado.titulo}</b>${r.resultado.mensajes.map(m => `<p style="margin:.4em 0">${sanear(m)}</p>`).join('')}</div>
+      ${r.detalle.map(x => `<div class="pregunta"><div class="enun"><span class="n">${x.n}</span>${h(x.texto)}</div><div>${h(valorDetalle(x))}</div></div>`).join('')}</details>`).join('') : vacio('📝', 'Todavía no has respondido cuestionarios.')}`;
+  if (est && ind) { graficoRadar($('#cRadar'), ind.indicadores); if (ind.riasec) graficoRiasec($('#cRiasec'), ind.riasec); }
+};
+function valorDetalle(x) {
+  const v = x.valor;
+  if (x.tipo === 'escala' && v) return x.items.map(it => `${it.texto}: ${x.opciones[(v[it.id] || 0) - 1] || '—'}`).join(' · ');
+  if (x.tipo === 'pareo' && v) return x.items.map((it, i) => `${i + 1}: ${v[it.id] || '—'}`).join(' · ');
+  if (x.tipo === 'pasos' && v) return [1, 2, 3].map(i => v['texto' + i] ? `${i}) ${v['texto' + i]} (${v['fecha' + i] || 'sin fecha'})` : '').filter(Boolean).join('  ');
+  return valorTxt(v);
+}
+
+/* =====================================================================
+ * MENSAJES
+ * ===================================================================== */
+VISTAS.mensajes = async (c, p) => {
+  const tab = p.tab || 'chat';
+  const pers = esPersonal();
+  c.innerHTML = `<div class="tabs"><button class="tab ${tab === 'chat' ? 'activo' : ''}" data-tab="chat">💬 Conversaciones</button><button class="tab ${tab === 'avisos' ? 'activo' : ''}" data-tab="avisos">📣 Avisos</button>
+    ${pers ? '<span style="flex:1"></span><button class="btn oro mini" id="bAviso">📣 Mensaje masivo</button>' : ''}</div><div id="mCuerpo">${cargando()}</div>`;
+  $$('[data-tab]', c).forEach(b => b.onclick = () => ir('mensajes', { tab: b.dataset.tab }));
+  if ($('#bAviso')) $('#bAviso').onclick = formAviso;
+  const cuerpo = $('#mCuerpo');
+  if (tab === 'avisos') { cuerpo.innerHTML = `<div style="max-width:720px">${muro(await api('avisos'))}</div>`; activarLikes(cuerpo); return; }
+  const hilos = await api('hilos');
+  cuerpo.innerHTML = `<div class="chat" id="chat"><div class="chat-lista">${pers ? '<div style="padding:10px"><input class="input" id="buscaHilo" placeholder="Buscar conversación…"></div>' : ''}
+    ${hilos.map(x => `<button class="chat-item" data-h="${h(x.hilo)}" data-txt="${h((x.titulo + ' ' + x.sub).toLowerCase())}"><div class="avatar">${h(iniciales(x.titulo))}</div><div class="txt"><b>${h(x.titulo)}</b><small>${h(x.sub)}</small><small>${h(x.ultimo)}</small></div>
+      <div style="text-align:right"><small class="muted">${fecha(x.fecha)}</small>${x.noLeidos ? `<br><span class="nl">${x.noLeidos}</span>` : ''}</div></button>`).join('') || vacio('💬', 'Aún no hay consultas.')}</div>
+    <div class="chat-panel" id="panelChat">${vacio('💬', 'Elige una conversación.')}</div></div>`;
+  $$('[data-h]', cuerpo).forEach(b => b.onclick = () => abrirHilo(b.dataset.h));
+  if ($('#buscaHilo')) $('#buscaHilo').oninput = e => $$('[data-h]', cuerpo).forEach(b => b.classList.toggle('oculto', !b.dataset.txt.includes(e.target.value.toLowerCase())));
+  if (p.hilo) abrirHilo(p.hilo); else if (!pers && hilos[0]) abrirHilo(hilos[0].hilo);
+};
+async function abrirHilo(hilo, datos) {
+  const panel = $('#panelChat'); if (!panel) return;
+  $$('[data-h]').forEach(b => b.classList.toggle('activo', b.dataset.h === hilo));
+  $('#chat').classList.add('con-hilo');
+  panel.innerHTML = cargando();
+  try {
+    const d = datos || await api('hilo', { hilo });
+    panel.innerHTML = `<div class="chat-cab"><button class="btn fantasma mini" id="bAtrasChat" aria-label="Volver">←</button><div class="avatar">${h(iniciales(d.titulo))}</div><div><b>${h(d.titulo)}</b><div class="muted peq">${h(d.sub)}</div></div></div>
+      <div class="chat-msgs" id="msgs">${d.mensajes.map(m => `<div class="burbuja ${m.propio ? 'mia' : ''}">${!m.propio || esPersonal() ? `<small style="opacity:.8;margin:0 0 2px">${h(m.deNombre)}</small>` : ''}${h(m.texto)}<small>${fecha(m.fecha)}</small></div>`).join('') ||
+        `<div class="vacio"><span class="ico">👋</span>${esPersonal() ? 'Inicie la conversación.' : 'Escribe tu consulta: el equipo de tu curso te responderá aquí.'}</div>`}</div>
+      <form class="chat-form" id="fChat"><textarea class="input" id="txtChat" placeholder="Escribe un mensaje…" maxlength="2000" aria-label="Mensaje"></textarea><button class="btn oro" aria-label="Enviar">➤</button></form>`;
+    const ms = $('#msgs'); ms.scrollTop = ms.scrollHeight;
+    $('#bAtrasChat').onclick = () => $('#chat').classList.remove('con-hilo');
+    const txt = $('#txtChat');
+    txt.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#fChat').requestSubmit(); } };
+    $('#fChat').onsubmit = async e => {
+      e.preventDefault(); const v = txt.value.trim(); if (!v) return; txt.value = ''; txt.disabled = true;
+      try { const r = await api('enviar', { hilo, texto: v }); abrirHilo(hilo, r); } catch (err) { toast(err.message, true); txt.value = v; txt.disabled = false; }
+    };
+    actualizarBadge();
+  } catch (e) { panel.innerHTML = vacio('⚠️', h(e.message)); }
+}
+async function formAviso() {
+  const cursos = await misCursos();
+  const c = modal(`<h2>📣 Mensaje masivo</h2><p class="muted">Se publica en el muro del curso. Si marca "copia individual", llega además a la bandeja privada de cada destinatario.</p>
+    <label class="campo"><span>Para</span><select class="input" id="aPara"><option value="aviso_estudiantes">Estudiantes</option><option value="aviso_familias">Familias (apoderados)</option><option value="aviso_todos">Estudiantes y familias</option></select></label>
+    <label class="campo"><span>Cursos</span><select class="input" id="aCur" multiple size="${Math.min(6, cursos.length + 1)}">${E.perfil.rol === 'admin' ? '<option value="">Todos los cursos</option>' : ''}${cursos.map(x => `<option selected>${h(x.curso)}</option>`).join('')}</select></label>
+    <label class="campo"><span>Mensaje</span><textarea class="input" id="aTxt" maxlength="3000"></textarea></label>
+    <label class="fila"><input type="checkbox" id="aInd"> Enviar también copia individual a cada persona</label>
+    <div class="fila mt"><button class="btn oro" id="bPub">Publicar</button><button class="btn fantasma" data-cerrar>Cancelar</button></div>`);
+  $('#bPub', c).onclick = async ev => {
+    ev.target.disabled = true;
+    try {
+      const r = await api('publicarAviso', { paraTipo: $('#aPara', c).value, cursos: Array.from($('#aCur', c).selectedOptions).map(o => o.value).filter(Boolean).join(', '), texto: $('#aTxt', c).value, individual: $('#aInd', c).checked });
+      cerrarModal(); toast('Aviso publicado' + (r.copias ? ` · ${r.copias} copias individuales` : '')); ir('mensajes', { tab: 'avisos' });
+    } catch (e) { toast(e.message, true); ev.target.disabled = false; }
+  };
+}
+
+/* =====================================================================
+ * MI CUENTA
+ * ===================================================================== */
+VISTAS.cuenta = async (c) => {
+  const p = E.perfil;
+  c.innerHTML = `<div class="grid g2"><div class="tarjeta"><div class="fila"><div class="avatar g">${h(iniciales(p.nombre))}</div><div><h3 style="margin:0">${h(p.nombre)}</h3><div class="muted">${h(ROL_TXT[p.rol])}${p.estudianteNombre && p.rol === 'apoderado' ? ' de ' + h(p.estudianteNombre) : ''}</div><div class="muted peq">${h(p.cursos.join(', '))}</div></div></div>
+      <div class="fila mt"><button class="btn" id="bClave">🔐 Cambiar mi clave</button><button class="btn sec" id="bDatos">⬇️ Descargar mis datos</button></div>
+      <p class="muted peq mt">${p.rol === 'estudiante' || p.rol === 'apoderado' ? 'Cada perfil (estudiante, madre, padre, tutor) tiene su propia clave. Si cambias la tuya, los demás siguen entrando con la suya.' : ''}</p></div>
+    <div class="tarjeta"><h3>🔒 Privacidad y derechos</h3><p class="peq">Puede ejercer sus derechos de acceso, rectificación, supresión, oposición, portabilidad y bloqueo (Ley 21.719) escribiendo a <a href="mailto:${h(E.info.contactoPrivacidad)}">${h(E.info.contactoPrivacidad)}</a>.</p><button class="btn sec" id="bPriv">Ver aviso de privacidad</button></div></div>`;
+  $('#bClave').onclick = () => cambiarClaveModal(false);
+  $('#bPriv').onclick = () => verPrivacidad(false);
+  $('#bDatos').onclick = async () => { try { const d = await api('misDatos'); descargar('mis-datos-proyecto-de-vida.json', JSON.stringify(d, null, 2), 'application/json'); } catch (e) { toast(e.message, true); } };
+};
+function cambiarClaveModal(obligatorio) {
+  const c = modal(`<h2>Cambiar clave</h2>${obligatorio ? '<p class="chip alerta">Por seguridad, debe cambiar la clave temporal antes de continuar.</p>' : ''}
+    <label class="campo"><span>Clave actual</span><input class="input" type="password" id="cAct" autocomplete="current-password"></label>
+    <label class="campo"><span>Nueva clave</span><input class="input" type="password" id="cNue" autocomplete="new-password"><small>Mínimo 8 caracteres, con letras y números.</small></label>
+    <label class="campo"><span>Repetir nueva clave</span><input class="input" type="password" id="cRep" autocomplete="new-password"></label>
+    <p class="err" id="cErr"></p><button class="btn oro" id="bCambiar">Guardar clave</button>`);
+  if (obligatorio) { $('#modal').onclick = null; $('.cerrar', c).remove(); }
+  $('#bCambiar', c).onclick = async () => {
+    if ($('#cNue', c).value !== $('#cRep', c).value) { $('#cErr', c).textContent = 'Las claves no coinciden.'; return; }
+    try { await api('cambiarClave', { actual: $('#cAct', c).value, nueva: $('#cNue', c).value }); E.perfil.debeCambiar = false; cerrarModal(); toast('Clave actualizada'); if (obligatorio) ir('inicio'); }
+    catch (e) { $('#cErr', c).textContent = e.message; }
+  };
+}
+
+/* =====================================================================
+ * PERSONAL: CURSOS Y REPORTE INDIVIDUAL
+ * ===================================================================== */
+async function selectorCurso(c, alCambiar) {
+  const cursos = await misCursos();
+  if (!cursos.length) { c.innerHTML = vacio('🗂️', 'No hay cursos disponibles.'); return null; }
+  if (!E.cursoSel || !cursos.some(x => x.curso === E.cursoSel)) E.cursoSel = cursos[0].curso;
+  return `<label class="fila"><b>Curso</b><select class="input" style="width:auto" id="selCurso">${opcionesCursos(cursos, E.cursoSel)}</select></label>`;
+}
+function enlazarCurso(c, fn) { const s = $('#selCurso', c); if (s) s.onchange = e => { E.cursoSel = e.target.value; fn(); }; }
+
+VISTAS.cursos = async (c) => {
+  const sel = await selectorCurso(c); if (!sel) return;
+  const d = await api('reporteCurso', { curso: E.cursoSel });
+  c.innerHTML = `<div class="fila entre">${sel}<div class="fila"><input class="input" id="busca" placeholder="Buscar estudiante…" style="width:220px"><button class="btn sec mini" id="bCsv">⬇️ CSV</button></div></div>
+    <p class="muted peq mt">Indicadores de proyección (1 a 4): <span class="nivel n1">&lt;2</span> no logrado · <span class="nivel n2">2–2,9</span> en desarrollo · <span class="nivel n3">3–3,4</span> logrado · <span class="nivel n4">≥3,5</span> logrado sólidamente.</p>
+    <div class="tabla-wrap"><table class="tabla"><thead><tr><th>Estudiante</th>${DIM.map(x => `<th>${x[1]}</th>`).join('')}<th>Perfil</th><th>Instrumentos</th><th>Alertas</th></tr></thead><tbody>
+    ${d.filas.map(f => `<tr data-rut="${h(f.rut)}" data-txt="${h(f.nombre.toLowerCase())}" style="cursor:pointer"><td><b>${h(f.nombre)}</b><div class="muted peq">${h(f.primeraPreferencia || '')}</div></td>${DIM.map(x => `<td>${nivelTag(f.indicadores[x[0]])}</td>`).join('')}
+      <td>${f.perfil ? `<span class="chip oro">${h(f.perfil)}</span>` : '—'}</td><td>${f.completados}</td><td>${f.alertas.length ? `<span class="chip alerta" title="${h(f.alertas.join(' · '))}">⚠️ ${f.alertas.length}</span>` : '<span class="chip ok">✓</span>'}</td></tr>`).join('') || `<tr><td colspan="8">${vacio('🎒', 'Sin estudiantes en este curso.')}</td></tr>`}</tbody></table></div>`;
+  enlazarCurso(c, () => ir('cursos'));
+  $$('[data-rut]', c).forEach(tr => tr.onclick = () => ir('estudiante', { rut: tr.dataset.rut }));
+  $('#busca').oninput = e => $$('[data-rut]', c).forEach(tr => tr.classList.toggle('oculto', !tr.dataset.txt.includes(e.target.value.toLowerCase())));
+  $('#bCsv').onclick = () => descargar(`curso-${E.cursoSel}.csv`, csv([['RUT', 'Nombre', ...DIM.map(x => x[1]), 'Perfil RIASEC', 'Primera preferencia', 'Instrumentos', 'Alertas']].concat(d.filas.map(f => [f.rut, f.nombre, ...DIM.map(x => f.indicadores[x[0]]), f.perfil, f.primeraPreferencia, f.completados, f.alertas.join(' | ')]))), 'text/csv;charset=utf-8');
+};
+
+VISTAS.estudiante = async (c, p) => {
+  const d = await api('reporteEstudiante', { rut: p.rut });
+  const pr = d.proyeccion, e = d.estudiante, admin = E.perfil.rol === 'admin';
+  $('#tituloVista').textContent = 'Reporte individual';
+  c.innerHTML = `<div class="fila entre no-print"><button class="btn fantasma mini" onclick="ir('cursos')">← Volver al curso</button><div class="fila">
+      <button class="btn sec mini" id="bImp">🖨️ Imprimir / PDF</button><button class="btn sec mini" id="bCsvE">⬇️ CSV</button></div></div>
+    <div id="rep">
+    <div class="tarjeta mt fila"><div class="avatar g">${h(iniciales(e.nombre))}</div><div style="flex:1"><h2 style="margin:0">${h(e.nombre)}</h2><div class="muted">${h(e.curso)} · RUT ${h(e.rut)}</div>
+      <div class="fila mt">${pr.perfil ? `<span class="chip oro">Perfil ${h(pr.perfil)}</span>` : ''}${pr.primeraPreferencia ? `<span class="chip">1ª preferencia: ${h(pr.primeraPreferencia)}</span>` : ''}${pr.alertas.map(a => `<span class="chip alerta">⚠️ ${h(a)}</span>`).join('')}</div></div>
+      <div class="fila no-print">${d.cuentas.map(u => `<button class="btn mini sec" data-msg="${h(u.id)}">💬 ${u.rol === 'estudiante' ? 'Estudiante' : h(u.parentesco)}</button>`).join('')}</div></div>
+    <div class="grid g2 mt"><div class="tarjeta"><h3>Indicadores de proyección</h3><div class="lienzo"><canvas id="cRad"></canvas></div>
+      <table class="tabla mt">${DIM.map(x => `<tr><td>${x[1]}</td><td>${nivelTag(pr.indicadores[x[0]])}</td><td class="muted peq">${pr.niveles[x[0]] || 'Sin datos'}</td></tr>`).join('')}</table>
+      ${pr.lectura.length ? `<div class="sello">📖 ${pr.lectura.map(h).join(' ')}</div>` : ''}</div>
+    <div class="tarjeta"><h3>Intereses RIASEC</h3>${pr.riasec ? '<div class="lienzo"><canvas id="cRi"></canvas></div>' : vacio('⭐', 'Sin mapa de intereses.')}
+      <h3 class="mt">Certeza E2 → E3</h3><div class="lienzo" style="height:160px"><canvas id="cCert"></canvas></div></div></div>
+    <div class="mt2" id="iaEst"></div>
+    <div class="grid g2 mt2"><div><h3>Retroalimentación</h3>
+      <div class="tarjeta plana no-print"><textarea class="input" id="rTxt" placeholder="Escriba una retroalimentación para ${h(e.nombre.split(' ')[0])}…"></textarea>
+      <div class="fila mt">${admin ? '<label class="fila peq"><input type="checkbox" id="rApo"> Visible para la familia</label>' : '<span class="muted peq">La visibilidad para familias la define la administración.</span>'}<span style="flex:1"></span><button class="btn oro mini" id="bRetro">Publicar</button></div></div>
+      <div id="listaRetro" class="mt">${d.retro.map(r => `<div class="tarjeta plana" style="margin-bottom:8px"><div class="fila entre"><b>${h(r.autorNombre)}</b><span class="muted peq">${fecha(r.fecha)}</span></div><p style="margin:.4em 0;white-space:pre-wrap">${h(r.texto)}</p>
+        ${admin ? `<label class="fila peq no-print"><input type="checkbox" data-vis="${r.id}" ${r.visibleApoderado ? 'checked' : ''}> Visible para la familia</label>` : r.visibleApoderado ? '<span class="chip violeta">Visible para la familia</span>' : ''}</div>`).join('') || '<p class="muted">Sin retroalimentación aún.</p>'}</div></div>
+    <div><h3>Respuestas</h3>${d.respuestas.map(r => `<details class="tarjeta plana" style="margin-bottom:8px"><summary style="cursor:pointer"><span class="chip">${h(r.codigo.split('@')[0])}</span> <b>${h(r.titulo)}</b> <span class="muted peq">${fecha(r.fecha)}</span></summary>
+      ${r.items.map(x => `<div class="pregunta" style="padding:10px 0"><div class="enun" style="margin-bottom:4px"><span class="n">${x.n}</span>${h(x.texto)}</div><div class="peq">${h(valorDetalle(x))}</div></div>`).join('')}</details>`).join('') || '<p class="muted">Sin respuestas.</p>'}</div></div></div>`;
+  graficoRadar($('#cRad'), pr.indicadores);
+  if (pr.riasec) graficoRiasec($('#cRi'), pr.riasec);
+  graficar($('#cCert'), { type: 'bar', data: { labels: ['E2 (sesión 3)', 'E3 (sesión 5)'], datasets: [{ data: [pr.certezaE2, pr.certezaE3], backgroundColor: ['#9fb6de', '#0b2a66'], borderRadius: 8 }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { min: 0, max: 4 } } } });
+  panelIA($('#iaEst'), { tipo: 'estudiante', rut: e.rut }, e.nombre);
+  $('#bImp').onclick = () => imprimir($('#rep'), 'Reporte individual · ' + e.nombre);
+  $('#bCsvE').onclick = () => descargar(`reporte-${e.rut}.csv`, csv([['Instrumento', 'N.°', 'Pregunta', 'Respuesta']].concat(...d.respuestas.map(r => r.items.map(x => [r.titulo, x.n, x.texto, valorDetalle(x)])))), 'text/csv;charset=utf-8');
+  $$('[data-msg]', c).forEach(b => b.onclick = async () => {
+    const t = prompt('Mensaje privado:'); if (!t) return;
+    try { await api('enviar', { paraUid: b.dataset.msg, texto: t }); toast('Mensaje enviado'); } catch (err) { toast(err.message, true); }
+  });
+  $('#bRetro').onclick = async () => {
+    try { await api('guardarRetro', { rut: e.rut, texto: $('#rTxt').value, visibleApoderado: admin && $('#rApo').checked }); toast('Retroalimentación publicada'); ir('estudiante', { rut: e.rut }); } catch (err) { toast(err.message, true); }
+  };
+  $$('[data-vis]', c).forEach(x => x.onchange = async () => { try { await api('visibilidadRetro', { id: x.dataset.vis, visible: x.checked }); toast('Visibilidad actualizada'); } catch (err) { toast(err.message, true); } });
+};
+
+/* =====================================================================
+ * ANÁLISIS IA (consistente y compartido por el equipo)
+ * ===================================================================== */
+async function panelIA(cont, params, etiqueta) {
+  cont.innerHTML = cargando('Buscando el análisis vigente…');
+  const pintar = (a) => {
+    const k = a.contenido || {};
+    const lista = (t, ico, arr) => arr && arr.length ? `<h4>${ico} ${t}</h4><ul>${arr.map(x => `<li>${h(x)}</li>`).join('')}</ul>` : '';
+    cont.innerHTML = `<div class="ia-card"><div class="fila entre"><h3 style="margin:0">✨ Análisis e interpretación ${params.tipo === 'curso' ? 'del curso' : 'individual'}</h3>
+      <div class="fila no-print">${a.existe ? '' : '<button class="btn oro mini" data-gen>Generar análisis</button>'}${a.desactualizado ? '<button class="btn oro mini" data-gen>Actualizar con datos nuevos</button>' : ''}${a.existe && E.perfil.rol === 'admin' ? '<button class="btn fantasma mini" data-forzar title="Solo administración">↻ Regenerar</button>' : ''}</div></div>
+      ${!a.existe ? `<p class="muted">Aún no se ha generado el análisis para ${h(etiqueta)}. Al generarlo, quedará guardado y <b>todo el equipo verá exactamente el mismo</b> mientras los datos no cambien.</p>` : `
+      ${a.desactualizado ? '<p class="chip alerta">Hay respuestas nuevas desde este análisis. Actualícelo para incluirlas.</p>' : ''}
+      ${k.nota ? `<p class="chip alerta">${h(k.nota)}</p>` : ''}
+      <p style="font-size:1.02rem">${h(k.resumen)}</p>
+      <div class="grid g2">${'<div>' + lista('Fortalezas', '🌟', k.fortalezas) + lista('Aspectos a desarrollar', '🧩', k.focos) + lista('Alertas', '⚠️', k.alertas) + '</div><div>' + lista('Recomendaciones para el equipo', '🧭', k.recomendaciones) + lista('Decisiones de orientación', '✅', k.decisiones) + '</div>'}</div>
+      ${k.mensajeEstudiante ? `<h4>💬 Mensaje sugerido para el estudiante</h4><p class="tarjeta plana" style="margin:0">${h(k.mensajeEstudiante)}</p>` : ''}
+      ${k.sugerenciasFamilia ? `<h4>🏡 Sugerencia para la familia</h4><p style="margin:0">${h(k.sugerenciasFamilia)}</p>` : ''}
+      <div class="sello">🔏 Análisis único compartido · ${a.motor === 'reglas' ? 'Motor de reglas del manual' : 'IA: ' + h(a.motor.split(':')[1] || a.motor)} · versión ${h(a.version)} · generado por ${h(a.generadoPorNombre)} el ${h(a.fecha)}</div>`}</div>`;
+    $$('[data-gen]', cont).forEach(b => b.onclick = () => cargar({ generar: true }));
+    const f = $('[data-forzar]', cont); if (f) f.onclick = () => { if (confirm('¿Regenerar el análisis? Reemplazará la versión vigente para todo el equipo.')) cargar({ generar: true, forzar: true }); };
+  };
+  const cargar = async (extra) => {
+    if (extra) cont.innerHTML = cargando('Analizando resultados… puede tardar unos segundos.');
+    try { pintar(await api('analisis', Object.assign({}, params, extra || {}))); } catch (e) { cont.innerHTML = vacio('⚠️', h(e.message)); }
+  };
+  cargar();
+}
+
+VISTAS.analisis = async (c, p) => {
+  const tab = p.tab || 'curso';
+  const sel = await selectorCurso(c); if (!sel) return;
+  c.innerHTML = `<div class="tabs"><button class="tab ${tab === 'curso' ? 'activo' : ''}" data-tab="curso">👥 Por curso</button><button class="tab ${tab === 'estudiante' ? 'activo' : ''}" data-tab="estudiante">🎒 Por estudiante</button><button class="tab ${tab === 'historial' ? 'activo' : ''}" data-tab="historial">🗂️ Análisis del equipo</button></div>
+    <div class="tarjeta plana peq" style="margin-bottom:16px">🔏 <b>Consistencia garantizada:</b> cada análisis se genera una sola vez por curso o estudiante con la misma pauta (manual docente §9). Si otro docente consulta al mismo estudiante, verá el mismo análisis; solo cambia cuando hay respuestas nuevas.</div>
+    <div id="aCuerpo"></div>`;
+  $$('[data-tab]', c).forEach(b => b.onclick = () => ir('analisis', { tab: b.dataset.tab }));
+  const cu = $('#aCuerpo');
+  if (tab === 'historial') {
+    const hs = await api('historialAnalisis');
+    cu.innerHTML = `<div class="tabla-wrap"><table class="tabla"><thead><tr><th>Análisis</th><th>Estado</th><th>Resumen</th><th>Generado por</th><th>Fecha</th><th></th></tr></thead><tbody>
+      ${hs.map(a => `<tr><td><b>${h(a.etiqueta)}</b><div class="muted peq">${a.tipo}</div></td><td>${a.vigente ? '<span class="chip ok">Vigente</span>' : '<span class="chip">Anterior</span>'}</td><td class="peq">${h(a.resumen)}…</td><td>${h(a.generadoPorNombre)}<div class="muted peq">${a.motor === 'reglas' ? 'reglas' : 'IA'}</div></td><td class="peq">${h(a.fecha)}</td>
+      <td>${a.vigente ? `<button class="btn mini sec" data-ver='${h(JSON.stringify({ tipo: a.tipo, rut: a.rut, curso: a.curso }))}'>Abrir</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="6">${vacio('🗂️', 'Aún no hay análisis generados.')}</td></tr>`}</tbody></table></div>`;
+    $$('[data-ver]', cu).forEach(b => b.onclick = () => { const x = JSON.parse(b.dataset.ver); if (x.tipo === 'estudiante') ir('estudiante', { rut: x.rut }); else { E.cursoSel = x.curso; ir('analisis', { tab: 'curso' }); } });
+    return;
+  }
+  if (tab === 'estudiante') {
+    const ests = await api('estudiantesCurso', { curso: E.cursoSel });
+    cu.innerHTML = `<div class="fila">${sel}<select class="input" style="width:auto;min-width:260px" id="selEst"><option value="">Elija estudiante…</option>${ests.map(x => `<option value="${h(x.rut)}">${h(x.nombre)}</option>`).join('')}</select></div><div id="iaE" class="mt"></div>`;
+    enlazarCurso(cu, () => ir('analisis', { tab: 'estudiante' }));
+    $('#selEst').onchange = e => { if (e.target.value) ir('estudiante', { rut: e.target.value }); };
+    return;
+  }
+  const d = await api('reporteCurso', { curso: E.cursoSel });
+  cu.innerHTML = `<div class="fila entre">${sel}<button class="btn sec mini no-print" id="bImpA">🖨️ Imprimir / PDF</button></div><div id="repA" class="mt">${graficosCursoHTML(d)}<div class="mt2" id="iaC"></div></div>`;
+  enlazarCurso(cu, () => ir('analisis', { tab: 'curso' }));
+  dibujarGraficosCurso(d);
+  panelIA($('#iaC'), { tipo: 'curso', curso: E.cursoSel }, 'el curso ' + E.cursoSel);
+  $('#bImpA').onclick = () => imprimir($('#repA'), 'Análisis del curso ' + E.cursoSel);
+};
+
+function graficosCursoHTML(d) {
+  const resp = d.filas.filter(f => f.completados > 0).length;
+  return `<div class="grid g4 kpis"><div class="tarjeta kpi"><span class="ico">🎒</span><b>${d.estudiantes}</b><span>estudiantes</span></div><div class="tarjeta kpi"><span class="ico">✍️</span><b>${resp}</b><span>con respuestas</span></div>
+    <div class="tarjeta kpi"><span class="ico">⚠️</span><b>${d.alertas.length}</b><span>con alertas</span></div><div class="tarjeta kpi"><span class="ico">🎯</span><b>${d.certeza.e3 !== null ? d.certeza.e3.toFixed(1) : '—'}</b><span>certeza final promedio</span></div></div>
+    <div class="grid g2 mt"><div class="tarjeta"><h3>Promedio por indicador</h3><div class="lienzo"><canvas id="gProm"></canvas></div></div>
+    <div class="tarjeta"><h3>Distribución de niveles</h3><div class="lienzo"><canvas id="gDist"></canvas></div></div>
+    <div class="tarjeta"><h3>Intereses predominantes (RIASEC)</h3><div class="lienzo"><canvas id="gRia"></canvas></div></div>
+    <div class="tarjeta"><h3>¿Qué influye más en su decisión? (E1)</h3><div class="lienzo"><canvas id="gInf"></canvas></div></div>
+    <div class="tarjeta"><h3>Modalidades que conocen (E1)</h3><div class="lienzo"><canvas id="gMod"></canvas></div></div>
+    <div class="tarjeta"><h3>Participación por instrumento</h3><div class="lienzo"><canvas id="gPar"></canvas></div></div></div>
+    ${d.alertas.length ? `<div class="tarjeta mt"><h3>⚠️ Estudiantes que requieren seguimiento</h3><div class="tabla-wrap"><table class="tabla">${d.alertas.map(a => `<tr><td><b>${h(a.nombre)}</b></td><td>${a.alertas.map(x => `<span class="chip alerta">${h(x)}</span>`).join(' ')}</td></tr>`).join('')}</table></div></div>` : ''}`;
+}
+function dibujarGraficosCurso(d) {
+  graficar($('#gProm'), { type: 'bar', data: { labels: DIM.map(x => x[1]), datasets: [{ data: DIM.map(x => d.promedios[x[0]]), backgroundColor: ['#0b2a66', '#1f9e8f', '#e3b505', '#c8553d'], borderRadius: 10 }] }, options: { plugins: { legend: { display: false } }, scales: { y: { min: 0, max: 4 } } } });
+  const nv = ['No logrado', 'En desarrollo', 'Logrado', 'Logrado sólidamente'], cnv = ['#e8857e', '#f2b66d', '#7fcfa7', '#1f9e6b'];
+  graficar($('#gDist'), { type: 'bar', data: { labels: DIM.map(x => x[1]), datasets: nv.map((n, i) => ({ label: n, data: DIM.map(x => d.distribucion[x[0]][i]), backgroundColor: cnv[i] })) }, options: { scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }, plugins: { legend: { position: 'bottom' } } } });
+  graficar($('#gRia'), { type: 'polarArea', data: { labels: 'RIASEC'.split('').map(l => l + ' ' + RIASEC_T[l]), datasets: [{ data: 'RIASEC'.split('').map(l => d.riasec[l]), backgroundColor: COLORES.map(x => x + 'cc') }] }, options: { plugins: { legend: { position: 'right' } } } });
+  const inf = Object.keys(d.influencia);
+  graficar($('#gInf'), { type: 'doughnut', data: { labels: inf.length ? inf : ['Sin datos'], datasets: [{ data: inf.length ? inf.map(k => d.influencia[k]) : [1], backgroundColor: inf.length ? COLORES : ['#e3e0d8'] }] }, options: { plugins: { legend: { position: 'right' } }, cutout: '58%' } });
+  const mod = ['Científico-humanista', 'Técnico-profesional', 'Artística', 'No conozco ninguna'];
+  graficar($('#gMod'), { type: 'bar', data: { labels: mod, datasets: [{ data: mod.map(m => d.modalidades[m] || 0), backgroundColor: '#0f4c9c', borderRadius: 8 }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } } } });
+  const ins = ['E1', 'RIASEC', 'E2', 'TRAMPAS', 'E3', 'AUTONOMIA'];
+  graficar($('#gPar'), { type: 'bar', data: { labels: ins, datasets: [{ label: 'Respondieron', data: ins.map(k => d.participacion[k] || 0), backgroundColor: '#e3b505', borderRadius: 8 }, { label: 'Total', data: ins.map(() => d.estudiantes), backgroundColor: '#e3e0d8', borderRadius: 8 }] }, options: { plugins: { legend: { position: 'bottom' } } } });
+}
+
+/* =====================================================================
+ * REPORTES (curso y sesión)
+ * ===================================================================== */
+VISTAS.reportes = async (c, p) => {
+  const tab = p.tab || 'curso';
+  const sel = await selectorCurso(c); if (!sel) return;
+  c.innerHTML = `<div class="tabs"><button class="tab ${tab === 'curso' ? 'activo' : ''}" data-tab="curso">👥 Reporte del curso</button><button class="tab ${tab === 'sesion' ? 'activo' : ''}" data-tab="sesion">🧭 Reporte de sesión</button></div><div id="rCuerpo"></div>`;
+  $$('[data-tab]', c).forEach(b => b.onclick = () => ir('reportes', { tab: b.dataset.tab }));
+  const cu = $('#rCuerpo');
+  if (tab === 'curso') {
+    const d = await api('reporteCurso', { curso: E.cursoSel });
+    cu.innerHTML = `<div class="fila entre">${sel}<div class="fila"><button class="btn sec mini" id="bImpC">🖨️ Imprimir / PDF</button><button class="btn sec mini" id="bCsvC">⬇️ CSV</button></div></div><div id="repC" class="mt">${graficosCursoHTML(d)}</div>`;
+    enlazarCurso(cu, () => ir('reportes', { tab: 'curso' }));
+    dibujarGraficosCurso(d);
+    $('#bImpC').onclick = () => imprimir($('#repC'), 'Reporte del curso ' + E.cursoSel);
+    $('#bCsvC').onclick = () => descargar(`reporte-curso-${E.cursoSel}.csv`, csv([['RUT', 'Nombre', ...DIM.map(x => x[1]), 'Perfil', 'Primera preferencia', 'Alertas']].concat(d.filas.map(f => [f.rut, f.nombre, ...DIM.map(x => f.indicadores[x[0]]), f.perfil, f.primeraPreferencia, f.alertas.join(' | ')]))), 'text/csv;charset=utf-8');
+    return;
+  }
+  const ses = (await api('sesiones')).filter(s => s.audiencia !== 'docentes');
+  const sid = p.sesionId || (ses[0] && ses[0].id);
+  cu.innerHTML = `<div class="fila">${sel}<select class="input" style="width:auto" id="selSes">${ses.map(s => `<option value="${s.id}" ${s.id === sid ? 'selected' : ''}>${s.numero ? 'Sesión ' + s.numero + ' · ' : ''}${h(s.titulo)}${s.audiencia === 'familias' ? ' (familias)' : ''}</option>`).join('')}</select></div><div id="repS" class="mt">${cargando()}</div>`;
+  enlazarCurso(cu, () => ir('reportes', { tab: 'sesion', sesionId: $('#selSes').value }));
+  $('#selSes').onchange = e => ir('reportes', { tab: 'sesion', sesionId: e.target.value });
+  if (!sid) { $('#repS').innerHTML = vacio('🧭', 'No hay sesiones.'); return; }
+  const d = await api('reporteSesion', { sesionId: sid, curso: E.cursoSel });
+  const rs = $('#repS');
+  rs.innerHTML = `<div class="fila entre"><div><h2 style="margin:0">${d.sesion.numero ? 'Sesión ' + d.sesion.numero + ': ' : ''}${h(d.sesion.titulo)}</h2><p class="muted" style="margin:0">${h(d.sesion.objetivo)} · Curso ${h(d.curso)} (${d.estudiantes} estudiantes)</p></div>
+    <div class="fila no-print"><button class="btn sec mini" id="bImpS">🖨️ Imprimir / PDF</button><button class="btn sec mini" id="bCsvS">⬇️ Descargar resultados (CSV)</button></div></div>
+    ${d.cuestionarios.length ? d.cuestionarios.map((q, qi) => `<div class="tarjeta mt"><div class="fila entre"><h3 style="margin:0"><span class="chip">${h(q.codigo)}</span> ${h(q.titulo)}</h3><span class="chip ${q.respondieron ? 'ok' : ''}">${q.respondieron} respuesta(s)</span></div>
+      <div class="grid g2 mt">${q.preguntas.map((pr, pi) => `<div class="tarjeta plana"><b class="peq">${pr.n}. ${h(pr.texto)}</b>${Object.keys(pr.conteo).length ? `<div class="lienzo" style="height:200px"><canvas data-g="${qi}-${pi}"></canvas></div>` : ''}
+        ${pr.abiertas.length ? `<div style="max-height:200px;overflow:auto" class="mt">${pr.abiertas.map(a => `<p class="peq" style="margin:.3em 0;border-left:3px solid var(--oro);padding-left:8px"><b>${h(a.nombre.split(' ')[0])}:</b> ${h(a.texto)}</p>`).join('')}</div>` : ''}
+        ${!Object.keys(pr.conteo).length && !pr.abiertas.length ? '<p class="muted peq">Sin respuestas.</p>' : ''}</div>`).join('')}</div></div>`).join('') : vacio('📝', 'Esta sesión no tiene cuestionarios asociados.')}`;
+  d.cuestionarios.forEach((q, qi) => q.preguntas.forEach((pr, pi) => {
+    const k = Object.keys(pr.conteo); if (!k.length) return;
+    graficar($(`[data-g="${qi}-${pi}"]`, rs), { type: 'bar', data: { labels: k.map(x => x.length > 28 ? x.slice(0, 26) + '…' : x), datasets: [{ data: k.map(x => pr.conteo[x]), backgroundColor: COLORES[pi % COLORES.length], borderRadius: 6 }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } } });
+  }));
+  $('#bImpS').onclick = () => imprimir(rs, 'Reporte de sesión · ' + d.sesion.titulo + ' · ' + d.curso);
+  $('#bCsvS').onclick = () => {
+    const filas = [['Cuestionario', 'Estudiante', 'Responde', 'Fecha', 'Pregunta', 'Respuesta', 'Puntajes']];
+    d.cuestionarios.forEach(q => q.filas.forEach(f => Object.keys(f.respuestas).forEach(k => filas.push([q.codigo, f.nombre, f.quien, f.fecha, k, valorTxt(f.respuestas[k]), JSON.stringify(f.puntajes)]))));
+    descargar(`sesion-${d.sesion.numero}-${d.curso}.csv`, csv(filas), 'text/csv;charset=utf-8');
+  };
+};
+
+/* =====================================================================
+ * ADMINISTRACIÓN
+ * ===================================================================== */
+VISTAS.usuarios = async (c, p) => {
+  const f = Object.assign({ rol: '', q: '', curso: '' }, p);
+  const cursos = await misCursos();
+  const us = await api('usuarios', f);
+  c.innerHTML = `<div class="fila entre"><div class="fila"><input class="input" id="uQ" placeholder="Buscar por nombre o RUT" value="${h(f.q)}" style="width:230px">
+      <select class="input" id="uRol" style="width:auto"><option value="">Todos los roles</option>${Object.keys(ROL_TXT).map(r => `<option value="${r}" ${f.rol === r ? 'selected' : ''}>${ROL_TXT[r]}</option>`).join('')}</select>
+      <select class="input" id="uCur" style="width:auto"><option value="">Todos los cursos</option>${cursos.map(x => `<option ${f.curso === x.curso ? 'selected' : ''}>${h(x.curso)}</option>`).join('')}</select><button class="btn sec" id="uFil">Filtrar</button></div>
+    <div class="fila"><button class="btn sec" id="bApo">＋ Apoderado/tutor extra</button><button class="btn oro" id="bNuevoU">＋ Docente / asistente / admin</button></div></div>
+    <p class="muted peq mt">${us.length} cuenta(s). Las claves nunca se muestran: solo pueden restablecerse.</p>
+    <div class="tabla-wrap"><table class="tabla"><thead><tr><th>Nombre</th><th>RUT</th><th>Rol</th><th>Curso(s)</th><th>Estado</th><th>Último acceso</th><th></th></tr></thead><tbody>
+    ${us.slice(0, 400).map(u => `<tr><td><b>${h(u.nombre)}</b>${u.estudianteNombre && u.rol === 'apoderado' ? `<div class="muted peq">${h(u.parentesco)} de ${h(u.estudianteNombre)}</div>` : ''}</td><td class="peq">${h(u.rut)}</td><td><span class="chip ${u.rol === 'admin' ? 'oro' : u.rol === 'apoderado' ? 'violeta' : ''}">${h(ROL_TXT[u.rol])}</span></td>
+      <td class="peq">${h(u.curso || u.cursos || '—')}</td><td>${u.activo ? '<span class="chip ok">Activo</span>' : '<span class="chip peligro">Inactivo</span>'}${u.debeCambiar ? ' <span class="chip">Clave inicial</span>' : ''}</td><td class="peq">${h(u.ultimoAcceso || '—')}</td>
+      <td class="fila"><button class="btn mini sec" data-ed='${h(JSON.stringify(u))}'>Editar</button><button class="btn mini sec" data-rc="${h(u.id)}">Restablecer clave</button><button class="btn mini fantasma" data-del="${h(u.id)}" title="Eliminar cuenta">🗑️</button>${u.rol === 'estudiante' ? `<button class="btn mini peligro" data-sup="${h(u.rut)}" title="Derecho de supresión">Suprimir datos</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+  const filtrar = () => ir('usuarios', { q: $('#uQ').value, rol: $('#uRol').value, curso: $('#uCur').value });
+  $('#uFil').onclick = filtrar; $('#uQ').onkeydown = e => { if (e.key === 'Enter') filtrar(); };
+  $('#bNuevoU').onclick = () => formUsuario(null, cursos);
+  $('#bApo').onclick = () => formApoderado();
+  $$('[data-ed]', c).forEach(b => b.onclick = () => formUsuario(JSON.parse(b.dataset.ed), cursos));
+  $$('[data-rc]', c).forEach(b => b.onclick = async () => {
+    if (!confirm('¿Restablecer la clave de esta cuenta? Estudiantes y familias vuelven a la fecha de nacimiento del estudiante.')) return;
+    try { const r = await api('restablecerClave', { id: b.dataset.rc }); r.claveTemporal ? modal(`<h2>Clave temporal</h2><p>Entregue esta clave de forma privada. Se pedirá cambiarla al ingresar.</p><p class="display" style="font-size:2rem;text-align:center">${h(r.claveTemporal)}</p>`) : toast('Clave restablecida a la fecha de nacimiento (DDMMAAAA)'); } catch (e) { toast(e.message, true); }
+  });
+  $$('[data-sup]', c).forEach(b => b.onclick = async () => {
+    if (prompt('Se eliminarán el estudiante, las cuentas de su familia, sus respuestas, mensajes, retroalimentación y análisis. No se puede deshacer. Escriba SUPRIMIR para confirmar.') !== 'SUPRIMIR') return;
+    try { await api('eliminarEstudiante', { rut: b.dataset.sup }); E._cursos = null; toast('Datos del estudiante suprimidos'); filtrar(); } catch (e) { toast(e.message, true); }
+  });
+  $$('[data-del]', c).forEach(b => b.onclick = async () => { if (!confirm('¿Eliminar definitivamente esta cuenta?')) return; try { await api('eliminarUsuario', { id: b.dataset.del }); toast('Cuenta eliminada'); filtrar(); } catch (e) { toast(e.message, true); } });
+};
+function formUsuario(u, cursos) {
+  const personal = !u || ['admin', 'docente', 'asistente'].includes(u.rol);
+  const c = modal(`<h2>${u ? 'Editar cuenta' : 'Nuevo integrante del equipo'}</h2>
+    ${!u ? '<label class="campo"><span>RUT</span><input class="input" id="fRut" placeholder="12.345.678-9"></label>' : `<p class="muted">${h(u.rut)} · ${h(ROL_TXT[u.rol])}</p>`}
+    <label class="campo"><span>Nombre completo</span><input class="input" id="fNom" value="${h(u ? u.nombre : '')}"></label>
+    ${personal ? `<label class="campo"><span>Rol</span><select class="input" id="fRol">${['docente', 'asistente', 'admin'].map(r => `<option value="${r}" ${u && u.rol === r ? 'selected' : ''}>${ROL_TXT[r]}</option>`).join('')}</select></label>
+    <label class="campo"><span>Cursos asignados</span><select class="input" id="fCur" multiple size="${Math.min(8, cursos.length || 2)}">${cursos.map(x => `<option ${u && (u.cursos || '').split(/[,;]/).map(s => s.trim()).includes(x.curso) ? 'selected' : ''}>${h(x.curso)}</option>`).join('')}</select><small>También puede escribirlos: <input class="input mt" id="fCurTxt" placeholder="8° A, 8° B" value="${h(u ? u.cursos : '')}"></small></label>
+    <label class="campo"><span>Correo (opcional)</span><input class="input" id="fMail" type="email" value="${h(u ? u.email : '')}"></label>` : ''}
+    ${u ? `<label class="fila"><input type="checkbox" id="fAct" ${u.activo ? 'checked' : ''}> Cuenta activa</label>` : ''}
+    <div class="fila mt"><button class="btn oro" id="bGU">Guardar</button><button class="btn fantasma" data-cerrar>Cancelar</button></div>`);
+  if ($('#fCur', c)) $('#fCur', c).onchange = e => { $('#fCurTxt', c).value = Array.from(e.target.selectedOptions).map(o => o.value).join(', '); };
+  $('#bGU', c).onclick = async () => {
+    const d = { id: u && u.id, nombre: $('#fNom', c).value };
+    if (!u) d.rut = $('#fRut', c).value;
+    if ($('#fRol', c)) Object.assign(d, { rol: $('#fRol', c).value, cursos: $('#fCurTxt', c).value, email: $('#fMail', c).value });
+    if ($('#fAct', c)) d.activo = $('#fAct', c).checked;
+    try {
+      const r = await api('guardarUsuario', d); E._cursos = null;
+      if (r.claveTemporal) modal(`<h2>Cuenta creada</h2><p>Entregue al usuario su RUT y esta <b>clave temporal</b> de forma privada. Deberá cambiarla en su primer ingreso.</p><p class="display" style="font-size:2rem;text-align:center">${h(r.claveTemporal)}</p><button class="btn oro" data-cerrar onclick="ir('usuarios')">Listo</button>`);
+      else { cerrarModal(); toast('Cuenta guardada'); ir('usuarios'); }
+    } catch (e) { toast(e.message, true); }
+  };
+}
+function formApoderado() {
+  const c = modal(`<h2>Acceso adicional para apoderado/a</h2><p class="muted">Úselo cuando el tutor no es padre ni madre, o para crear un acceso que faltó. Ingresará con el RUT y la fecha de nacimiento del estudiante.</p>
+    <label class="campo"><span>RUT del estudiante</span><input class="input" id="aRut"></label>
+    <label class="campo"><span>Nombre del apoderado/a</span><input class="input" id="aNom"></label>
+    <label class="campo"><span>Acceso como</span><select class="input" id="aPar"><option value="tutor">Tutor/a</option><option value="madre">Madre</option><option value="padre">Padre</option></select></label>
+    <div class="fila mt"><button class="btn oro" id="bGA">Crear acceso</button><button class="btn fantasma" data-cerrar>Cancelar</button></div>`);
+  $('#bGA', c).onclick = async () => { try { await api('guardarUsuario', { rol: 'apoderado', estudianteRut: $('#aRut', c).value, nombre: $('#aNom', c).value, parentesco: $('#aPar', c).value }); cerrarModal(); toast('Acceso creado'); ir('usuarios'); } catch (e) { toast(e.message, true); } };
+}
+
+const COLUMNAS = ['Rut', 'DV', 'NombreAlumno', 'Sexo', 'FechaNac', 'Curso', 'Local', 'FecMatriculado', 'Direccion', 'Comuna', 'Nombre Padre', 'Nombre Madre', 'Nombre Tutor'];
+VISTAS.carga = async (c) => {
+  c.innerHTML = `<div class="grid g2"><div class="tarjeta"><h3>📥 Carga masiva de estudiantes y apoderados</h3>
+      <p class="peq">Suba un Excel (.xlsx) o CSV con estas columnas, en la primera fila:</p>
+      <div class="fila" style="gap:6px">${COLUMNAS.map(x => `<span class="chip">${x}</span>`).join('')}</div>
+      <ul class="peq mt"><li>Se crea una cuenta para el <b>estudiante</b>, la <b>madre</b> y el <b>padre</b> (si vienen sus nombres), cada una con clave independiente = fecha de nacimiento del estudiante (DDMMAAAA).</li>
+      <li>Si el <b>tutor</b> no es ni el padre ni la madre, se crea un acceso adicional de tutor.</li>
+      <li>Si el estudiante ya existe, se actualizan sus datos sin cambiar claves.</li></ul>
+      <button class="btn sec mini" id="bPlantilla">⬇️ Descargar plantilla Excel</button></div>
+    <div class="tarjeta"><div class="drop" id="drop">Arrastre el archivo aquí o <label style="color:var(--mar);cursor:pointer;font-weight:700">elíjalo<input type="file" id="fx" accept=".xlsx,.xls,.csv" hidden></label></div><div id="prev" class="mt"></div></div></div>`;
+  $('#bPlantilla').onclick = () => {
+    const ws = XLSX.utils.aoa_to_sheet([COLUMNAS, ['12345678', '5', 'Nombre Apellido Apellido', 'F', '05-03-2012', '8° A', 'Concepción', '01-03-2026', 'Calle 123', 'Concepción', 'Nombre del padre', 'Nombre de la madre', '']]);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Estudiantes'); XLSX.writeFile(wb, 'plantilla_carga_estudiantes.xlsx');
+  };
+  const procesar = async (file) => {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: false, raw: false });
+    const filas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: true });
+    if (!filas.length) return toast('El archivo no tiene filas.', true);
+    const faltan = ['Rut', 'DV', 'NombreAlumno', 'FechaNac', 'Curso'].filter(k => !Object.keys(filas[0]).some(x => x.replace(/\s/g, '').toLowerCase() === k.replace(/\s/g, '').toLowerCase()));
+    const cursos = {}; filas.forEach(f => { const k = f.Curso || f.curso; cursos[k] = (cursos[k] || 0) + 1; });
+    $('#prev').innerHTML = `<h3>${filas.length} filas · ${Object.keys(cursos).length} curso(s)</h3>
+      ${faltan.length ? `<p class="chip peligro">Faltan columnas: ${faltan.join(', ')}</p>` : ''}
+      <div class="fila">${Object.keys(cursos).map(k => `<span class="chip">${h(k)}: ${cursos[k]}</span>`).join('')}</div>
+      <div class="tabla-wrap mt" style="max-height:220px"><table class="tabla"><tr>${Object.keys(filas[0]).slice(0, 7).map(k => `<th>${h(k)}</th>`).join('')}</tr>${filas.slice(0, 5).map(f => `<tr>${Object.keys(filas[0]).slice(0, 7).map(k => `<td class="peq">${h(f[k])}</td>`).join('')}</tr>`).join('')}</table></div>
+      <div class="progreso mt"><div id="pb" style="width:0"></div></div><p id="pst" class="muted peq"></p>
+      <button class="btn oro" id="bImportar" ${faltan.length ? 'disabled' : ''}>Importar ${filas.length} estudiantes</button>`;
+    $('#bImportar').onclick = async ev => {
+      ev.target.disabled = true;
+      const tot = { creados: 0, actualizados: 0, cuentas: 0, errores: [] };
+      const lote = 60;
+      for (let i = 0; i < filas.length; i += lote) {
+        $('#pst').textContent = `Procesando ${Math.min(i + lote, filas.length)} de ${filas.length}…`;
+        try {
+          const r = await api('importar', { filas: filas.slice(i, i + lote) });
+          tot.creados += r.creados; tot.actualizados += r.actualizados; tot.cuentas += r.cuentas;
+          tot.errores.push(...r.errores.map(e => e.replace(/Fila (\d+)/, (m, n) => 'Fila ' + (Number(n) + i))));
+        } catch (e) { tot.errores.push(`Lote ${i / lote + 1}: ${e.message}`); }
+        $('#pb').style.width = Math.round(100 * Math.min(i + lote, filas.length) / filas.length) + '%';
+      }
+      E._cursos = null;
+      $('#pst').innerHTML = `<b>Listo:</b> ${tot.creados} nuevos, ${tot.actualizados} actualizados, ${tot.cuentas} cuentas creadas.${tot.errores.length ? `<br><span style="color:var(--peligro)">${tot.errores.length} fila(s) con problemas:</span><br>${tot.errores.slice(0, 30).map(h).join('<br>')}` : ''}`;
+      toast('Importación terminada');
+    };
+  };
+  $('#fx').onchange = e => e.target.files[0] && procesar(e.target.files[0]);
+  const drop = $('#drop');
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('sobre'); };
+  drop.ondragleave = () => drop.classList.remove('sobre');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('sobre'); if (e.dataTransfer.files[0]) procesar(e.dataTransfer.files[0]); };
+};
+
+VISTAS.config = async (c) => {
+  const k = await api('config');
+  c.innerHTML = `<div class="grid g2"><div class="tarjeta"><h3>🏫 Institución</h3>
+      ${[['nombreColegio', 'Nombre del colegio'], ['ciudad', 'Ciudad'], ['unidad', 'Unidad responsable'], ['anio', 'Año del proceso'], ['contactoPrivacidad', 'Correo de contacto para privacidad']].map(x => `<label class="campo"><span>${x[1]}</span><input class="input" data-k="${x[0]}" value="${h(k[x[0]])}"></label>`).join('')}</div>
+    <div class="tarjeta"><h3>🔒 Privacidad (Ley 21.719)</h3>
+      <label class="fila campo"><input type="checkbox" data-k="apoderadoVeRetro" ${k.apoderadoVeRetro === 'true' ? 'checked' : ''}> Las familias ven toda la retroalimentación de su estudiante</label>
+      <p class="muted peq">Si está desactivado, solo verán las retroalimentaciones que usted marque como visibles en cada reporte individual.</p>
+      <label class="fila campo"><input type="checkbox" data-k="iaIncluirAbiertas" ${k.iaIncluirAbiertas === 'true' ? 'checked' : ''}> Incluir respuestas abiertas (depuradas) en el análisis IA</label>
+      <label class="campo"><span>Meses de conservación de mensajes y auditoría</span><input class="input" type="number" min="6" data-k="retencionMeses" value="${h(k.retencionMeses)}"></label>
+      <button class="btn sec mini" id="bDepurar">🧹 Aplicar política de conservación ahora</button>
+      <h3 class="mt2">✨ Inteligencia artificial</h3>
+      <p class="peq">${k.iaConfigurada ? `<span class="chip ok">Configurada · ${h(k.iaProveedor)}</span>` : '<span class="chip alerta">Sin clave de IA: se usa el motor de reglas del manual (determinista)</span>'}</p>
+      <p class="muted peq">La clave se define en <b>Propiedades del script</b> (ANTHROPIC_API_KEY o GEMINI_API_KEY), nunca en el código ni en GitHub.</p></div>
+    <div class="tarjeta"><h3>🖼️ Imágenes institucionales</h3><p class="muted peq">Se guardan en la carpeta privada de Drive. Recomendado: menos de 90 KB cada una.</p>
+      ${[['img_logo', 'Insignia del colegio'], ['img_portada', 'Ilustración de portada (estudiantes)'], ['img_colegio', 'Fotografía del colegio (fondo del ingreso)']].map(x => `<div class="fila entre" style="margin-bottom:12px"><span>${x[1]}</span><label class="btn mini sec">Subir<input type="file" accept="image/*" data-img="${x[0]}" hidden></label></div>`).join('')}</div></div>
+    <button class="btn oro mt" id="bGuardarCfg">Guardar configuración</button>`;
+  $('#bGuardarCfg').onclick = async () => {
+    const d = {}; $$('[data-k]', c).forEach(x => { d[x.dataset.k] = x.type === 'checkbox' ? String(x.checked) : x.value; });
+    try { await api('guardarConfig', d); E.info = JSON.parse(await gs('infoPublica')); toast('Configuración guardada'); } catch (e) { toast(e.message, true); }
+  };
+  $('#bDepurar').onclick = async () => { if (!confirm('Se eliminarán mensajes y registros de auditoría más antiguos que el plazo definido. ¿Continuar?')) return; try { const r = await api('depurar'); toast(`${r.borrados} registros eliminados (anteriores a ${r.limite})`); } catch (e) { toast(e.message, true); } };
+  $$('[data-img]', c).forEach(x => x.onchange = async () => {
+    const f = x.files[0]; if (!f) return;
+    if (f.size > 2 * 1048576) return toast('La imagen supera 2 MB.', true);
+    try { await api('subirImagen', { clave: x.dataset.img, mime: f.type, nombre: f.name, base64: await leerArchivo(f) }); E.info = JSON.parse(await gs('infoPublica')); renderShell(); ir('config'); toast('Imagen actualizada'); } catch (e) { toast(e.message, true); }
+  });
+};
+
+VISTAS.auditoria = async (c) => {
+  const a = await api('auditoria', { n: 400 });
+  c.innerHTML = `<div class="fila entre"><p class="muted" style="margin:0">Registro de accesos y acciones (principio de responsabilidad, Ley 21.719). Últimos ${a.length} eventos.</p><button class="btn sec mini" id="bCsvAud">⬇️ CSV</button></div>
+    <div class="tabla-wrap mt"><table class="tabla"><thead><tr><th>Fecha</th><th>Usuario</th><th>Rol</th><th>Acción</th><th>Detalle</th></tr></thead><tbody>
+    ${a.map(x => `<tr><td class="peq">${h(x.fecha)}</td><td class="peq">${h(x.usuario)}</td><td>${h(x.rol)}</td><td><span class="chip ${/fallido|eliminar|suprimir/.test(x.accion) ? 'peligro' : ''}">${h(x.accion)}</span></td><td class="peq">${h(x.detalle)}</td></tr>`).join('')}</tbody></table></div>`;
+  $('#bCsvAud').onclick = () => descargar('auditoria.csv', csv([['Fecha', 'Usuario', 'Rol', 'Acción', 'Detalle']].concat(a.map(x => [x.fecha, x.usuario, x.rol, x.accion, x.detalle]))), 'text/csv;charset=utf-8');
+};
+
+/* =====================================================================
+ * ARRANQUE
+ * ===================================================================== */
+(async function iniciar() {
+  const tema = local.pget('tema', null); if (tema) document.documentElement.dataset.theme = tema;
+  $('#app').innerHTML = cargando('Preparando tu bitácora…');
+  try { E.info = JSON.parse(await gs('infoPublica')); } catch (e) { E.info = {}; }
+  const t = local.get('token', null);
+  if (t) {
+    E.token = t;
+    try { E.perfil = await api('perfil'); return postLogin(); } catch (e) { E.token = null; local.del('token'); }
+  }
+  pantallaLogin();
+})();
+</script>
